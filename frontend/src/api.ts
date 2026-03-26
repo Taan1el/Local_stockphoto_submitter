@@ -1,6 +1,8 @@
 import type {
+  AppSettings,
   Asset,
   AssetSubmissionStatus,
+  DraftGenerationMode,
   MarketplaceDefinition,
   MarketplaceId,
   SocialShortcutDefinition,
@@ -26,6 +28,12 @@ export async function fetchMarketplaces(): Promise<MarketplaceDefinition[]> {
   const response = await fetch('/api/marketplaces')
   const data = await parseJson<{ marketplaces: MarketplaceDefinition[] }>(response)
   return data.marketplaces
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  const response = await fetch('/api/settings')
+  const data = await parseJson<{ settings: AppSettings }>(response)
+  return data.settings
 }
 
 export async function fetchSocialShortcuts(): Promise<SocialShortcutDefinition[]> {
@@ -115,6 +123,22 @@ export async function openSocialShortcut(shortcutId: SocialShortcutId): Promise<
   })
   const data = await parseJson<{ message: string }>(response)
   return data.message
+}
+
+export async function saveSettings(payload: {
+  draftGenerationMode: DraftGenerationMode
+  openAIApiKey?: string
+  clearOpenAIApiKey?: boolean
+}): Promise<AppSettings> {
+  const response = await fetch('/api/settings', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+  const data = await parseJson<{ settings: AppSettings }>(response)
+  return data.settings
 }
 
 export async function exportCsv(

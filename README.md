@@ -11,6 +11,7 @@ This MVP is built around the workflow you chose:
 - export CSV files for Adobe Stock, Shutterstock, and Vecteezy
 - open each marketplace dashboard or upload page from the same app
 - open Facebook and X posting pages in the same saved Chrome profile
+- choose automatic, OpenAI, or offline metadata generation from inside the app
 
 ## Why this shape
 
@@ -22,7 +23,7 @@ Adobe Stock, Shutterstock, and Vecteezy do not currently offer a clean public co
 
 ## Run it
 
-Optional for image-aware draft metadata:
+Optional for OpenAI-powered image metadata:
 
 ```bash
 set OPENAI_API_KEY=your_key_here
@@ -80,7 +81,8 @@ For the Electron desktop build, app data is stored under the app user-data direc
 - photos only
 - JPG import
 - image-aware draft metadata when `OPENAI_API_KEY` is configured
-- filename fallback draft when no OpenAI key is configured
+- offline local draft metadata with a pretrained vision model
+- filename fallback draft if the offline model is not available yet
 - per-marketplace category fields
 - per-marketplace status tracking
 - quick posting shortcuts for Facebook and X
@@ -96,3 +98,9 @@ For the Electron desktop build, app data is stored under the app user-data direc
 - add EXIF/IPTC write-back into local JPG files
 - add direct SFTP helpers for marketplaces that support it
 - add marketplace-specific validation rules before export
+
+## Notes about offline mode
+
+- You do not need to train the offline model before using it.
+- The offline mode uses pretrained local models and stores them under the app data folder.
+- The first offline generation run may download a few hundred megabytes of model files once, then it can keep working locally afterward.

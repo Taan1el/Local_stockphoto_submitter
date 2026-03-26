@@ -1,5 +1,6 @@
 export type MarketplaceId = 'adobe-stock' | 'shutterstock' | 'vecteezy'
 export type SocialShortcutId = 'facebook' | 'x'
+export type DraftGenerationMode = 'auto' | 'openai' | 'offline'
 
 export interface MarketplaceDefinition {
   id: MarketplaceId
@@ -47,6 +48,17 @@ export interface Asset {
 
 export interface AppState {
   assets: Asset[]
+}
+
+export interface AppSettings {
+  draftGenerationMode: DraftGenerationMode
+  openAIApiKey: string
+}
+
+export interface PublicAppSettings {
+  draftGenerationMode: DraftGenerationMode
+  openAIApiKeyConfigured: boolean
+  openAIApiKeyPreview: string | null
 }
 
 export interface AssetDraft {

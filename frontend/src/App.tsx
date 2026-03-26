@@ -4,17 +4,21 @@ import {
   exportCsv,
   fetchAssets,
   fetchMarketplaces,
+  fetchSettings,
   fetchSocialShortcuts,
   generateDraft,
   importAssets,
   openMarketplacePage,
   openSocialShortcut,
   removeAsset,
+  saveSettings,
   updateAsset,
 } from './api'
 import type {
+  AppSettings,
   Asset,
   AssetSubmissionStatus,
+  DraftGenerationMode,
   MarketplaceDefinition,
   MarketplaceId,
   SocialShortcutDefinition,
@@ -31,6 +35,23 @@ type DragDataTransferItem = DataTransferItem & {
 }
 
 const STATUS_OPTIONS: AssetSubmissionStatus[] = ['draft', 'ready', 'reviewing', 'submitted']
+const DRAFT_MODE_OPTIONS: Array<{ value: DraftGenerationMode; label: string; help: string }> = [
+  {
+    value: 'auto',
+    label: 'Auto',
+    help: 'Use OpenAI when a key is saved, otherwise use the local offline model.',
+  },
+  {
+    value: 'offline',
+    label: 'Offline',
+    help: 'Run local metadata generation on this PC. The first run downloads local models once.',
+  },
+  {
+    value: 'openai',
+    label: 'OpenAI',
+    help: 'Always use your OpenAI API key for image-aware metadata generation.',
+  },
+]
 
 const CATEGORY_LABELS: Record<MarketplaceId, string> = {
   'adobe-stock': 'Adobe category',
@@ -130,6 +151,10 @@ function App() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [marketplaces, setMarketplaces] = useState<MarketplaceDefinition[]>([])
   const [socialShortcuts, setSocialShortcuts] = useState<SocialShortcutDefinition[]>([])
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [settingsDraftMode, setSettingsDraftMode] = useState<DraftGenerationMode>('auto')
+  const [settingsApiKey, setSettingsApiKey] = useState('')
+  const [savingSettings, setSavingSettings] = useState(false)
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   const [selectedForExport, setSelectedForExport] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -152,14 +177,17 @@ function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [loadedAssets, loadedMarketplaces, loadedShortcuts] = await Promise.all([
+        const [loadedAssets, loadedMarketplaces, loadedShortcuts, loadedSettings] = await Promise.all([
           fetchAssets(),
           fetchMarketplaces(),
           fetchSocialShortcuts(),
+          fetchSettings(),
         ])
         setAssets(loadedAssets)
         setMarketplaces(loadedMarketplaces)
         setSocialShortcuts(loadedShortcuts)
+        setSettings(loadedSettings)
+        setSettingsDraftMode(loadedSettings.draftGenerationMode)
         setSelectedAssetId(loadedAssets[0]?.id ?? null)
       } catch (error) {
         setNotice({
@@ -372,6 +400,61 @@ function App() {
     }
   }
 
+  async function handleSaveSettings(): Promise<void> {
+    setSavingSettings(true)
+    setNotice(null)
+
+    try {
+      const updatedSettings = await saveSettings({
+        draftGenerationMode: settingsDraftMode,
+        openAIApiKey: settingsApiKey.trim() || undefined,
+      })
+      setSettings(updatedSettings)
+      setSettingsApiKey('')
+      setNotice({
+        kind: 'success',
+        text:
+          settingsDraftMode === 'offline'
+            ? 'Draft settings saved. Offline mode is enabled.'
+            : updatedSettings.openAIApiKeyConfigured
+              ? 'Draft settings saved. Your OpenAI key is stored locally for this app.'
+              : 'Draft settings saved.',
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Unable to save draft settings.',
+      })
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  async function handleClearSavedApiKey(): Promise<void> {
+    setSavingSettings(true)
+    setNotice(null)
+
+    try {
+      const updatedSettings = await saveSettings({
+        draftGenerationMode: settingsDraftMode,
+        clearOpenAIApiKey: true,
+      })
+      setSettings(updatedSettings)
+      setSettingsApiKey('')
+      setNotice({
+        kind: 'success',
+        text: 'The saved OpenAI API key was removed from this app.',
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Unable to clear the saved API key.',
+      })
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
   async function handleSocialShortcut(shortcutId: SocialShortcutId): Promise<void> {
     setWorkingSocialShortcutId(shortcutId)
     setNotice(null)
@@ -476,6 +559,12 @@ function App() {
   ).length
 
   const editorDisabled = !selectedAsset || !draftForm || !draftStatuses
+  const generateButtonLabel =
+    settingsDraftMode === 'offline'
+      ? 'Generate offline draft'
+      : settingsDraftMode === 'openai'
+        ? 'Generate OpenAI draft'
+        : 'Generate draft'
 
   if (loading) {
     return (
@@ -516,6 +605,80 @@ function App() {
       </section>
 
       {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
+
+      {settings ? (
+        <section className="settings-panel">
+          <div className="section-head">
+            <div>
+              <p className="panel-kicker">Draft settings</p>
+              <h2>Metadata generation mode</h2>
+            </div>
+            <p className="section-copy">
+              Offline mode uses a pretrained local model. You do not need to train it first. If
+              you want better quality later, we can improve prompts or switch to a stronger local
+              model.
+            </p>
+          </div>
+          <div className="settings-grid">
+            <label>
+              Draft generation mode
+              <select
+                value={settingsDraftMode}
+                onChange={(event) => setSettingsDraftMode(event.target.value as DraftGenerationMode)}
+              >
+                {DRAFT_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              OpenAI API key
+              <input
+                placeholder={
+                  settings.openAIApiKeyConfigured
+                    ? `Saved locally (${settings.openAIApiKeyPreview ?? 'configured'})`
+                    : 'Paste your OpenAI API key here'
+                }
+                type="password"
+                value={settingsApiKey}
+                onChange={(event) => setSettingsApiKey(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="settings-help">
+            <span className="method-chip">
+              {
+                DRAFT_MODE_OPTIONS.find((option) => option.value === settingsDraftMode)?.help
+              }
+            </span>
+            {settings.openAIApiKeyConfigured ? (
+              <span className="method-chip">Saved key: {settings.openAIApiKeyPreview}</span>
+            ) : (
+              <span className="method-chip">No OpenAI key saved yet</span>
+            )}
+          </div>
+          <div className="market-actions">
+            <button
+              className="primary-button"
+              disabled={savingSettings}
+              onClick={() => void handleSaveSettings()}
+            >
+              {savingSettings ? 'Saving...' : 'Save draft settings'}
+            </button>
+            {settings.openAIApiKeyConfigured ? (
+              <button
+                className="secondary-button"
+                disabled={savingSettings}
+                onClick={() => void handleClearSavedApiKey()}
+              >
+                Clear saved key
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="market-grid">
         {marketplaces.map((marketplace) => (
@@ -706,7 +869,7 @@ function App() {
                 </div>
                 <div className="editor-actions">
                   <button className="secondary-button" disabled={saving} onClick={() => void handleGenerateDraft()}>
-                    Generate AI draft
+                    {generateButtonLabel}
                   </button>
                   <button className="ghost-button" onClick={() => void handleDelete()}>
                     Remove

@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "cors": "^2.8.5",
     "exifr": "^7.1.3",
     "express": "^5.1.0",

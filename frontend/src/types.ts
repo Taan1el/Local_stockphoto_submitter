@@ -1,5 +1,6 @@
 export type MarketplaceId = 'adobe-stock' | 'shutterstock' | 'vecteezy'
 export type SocialShortcutId = 'facebook' | 'x'
+export type DraftGenerationMode = 'auto' | 'openai' | 'offline'
 
 export type AssetSubmissionStatus = 'draft' | 'ready' | 'reviewing' | 'submitted'
 
@@ -19,6 +20,12 @@ export interface SocialShortcutDefinition {
   name: string
   description: string
   openUrl: string
+}
+
+export interface AppSettings {
+  draftGenerationMode: DraftGenerationMode
+  openAIApiKeyConfigured: boolean
+  openAIApiKeyPreview: string | null
 }
 
 export interface AssetMetadata {

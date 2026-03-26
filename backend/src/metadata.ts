@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { Asset, AssetDraft } from './types.js'
+import { env, pipeline } from '@huggingface/transformers'
+import { getModelCacheRoot } from './storage.js'
+import type { AppSettings, Asset, AssetDraft } from './types.js'
 
 const COMMON_STOPWORDS = new Set([
   'a',
@@ -21,14 +23,74 @@ const COMMON_STOPWORDS = new Set([
 
 const openAIApiUrl = 'https://api.openai.com/v1/chat/completions'
 const defaultVisionModel = process.env.STOCK_HUB_OPENAI_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'
+const offlineCaptionModel = 'Xenova/vit-gpt2-image-captioning'
+const offlineClassifierModel = 'Xenova/clip-vit-base-patch32'
+const offlineModelDtype = 'q8'
 
-export type DraftGenerationMode = 'vision' | 'filename'
+const offlineCandidateLabels = [
+  'mountain',
+  'mountain peaks',
+  'alpine landscape',
+  'snow',
+  'snowcapped',
+  'clouds',
+  'fog',
+  'mist',
+  'blue sky',
+  'dramatic sky',
+  'winter',
+  'nature',
+  'landscape',
+  'outdoors',
+  'scenic view',
+  'panorama',
+  'travel',
+  'wilderness',
+  'forest',
+  'lake',
+  'river',
+  'waterfall',
+  'beach',
+  'ocean',
+  'desert',
+  'sunset',
+  'sunrise',
+  'city skyline',
+  'architecture',
+  'street scene',
+  'flowers',
+  'garden',
+  'wildlife',
+  'birds',
+  'portrait',
+  'people',
+  'food',
+  'dog',
+  'cat',
+  'abstract background',
+]
+
+const genericOfflineKeywords = ['stock photo', 'copy space', 'horizontal', 'outdoors']
+
+type DraftGenerationResultMode = 'openai' | 'offline' | 'filename'
+
+type OfflineCaptioner = (imagePath: string) => Promise<Array<{ generated_text?: string }>>
+type OfflineClassifier = (
+  imagePath: string,
+  labels: string[],
+) => Promise<Array<{ label?: string; score?: number }>>
 
 export interface GeneratedDraftResult {
   draft: AssetDraft
-  mode: DraftGenerationMode
+  mode: DraftGenerationResultMode
+  message: string
   model: string | null
 }
+
+let offlinePipelinesPromise: Promise<{
+  captioner: OfflineCaptioner
+  classifier: OfflineClassifier
+}> | null = null
 
 function normalizeWords(input: string): string[] {
   return input
@@ -45,20 +107,14 @@ function toTitleCase(value: string): string {
   return value.replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-export function buildAssetDraft(filename: string): AssetDraft {
-  const basename = path.parse(filename).name
-  const words = normalizeWords(basename)
-  const titleWords = words.slice(0, 8)
-  const title = titleWords.length > 0 ? toTitleCase(titleWords.join(' ')) : 'Untitled stock photo'
-  const keywords = Array.from(new Set(words)).slice(0, 25)
+function sentenceCase(value: string): string {
+  const trimmed = value.trim()
 
-  return {
-    title,
-    description: '',
-    keywords,
-    editorial: false,
-    mature: false,
+  if (!trimmed) {
+    return ''
   }
+
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
 }
 
 function normalizeKeyword(keyword: string): string {
@@ -91,7 +147,13 @@ function normalizeDraft(draft: AssetDraft): AssetDraft {
   }
 }
 
-function openAIApiKey(): string | null {
+function resolveOpenAIApiKey(settings: AppSettings): string | null {
+  const storedKey = settings.openAIApiKey.trim()
+
+  if (storedKey) {
+    return storedKey
+  }
+
   return process.env.STOCK_HUB_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? null
 }
 
@@ -101,17 +163,123 @@ function encodeImageAsDataUrl(imagePath: string, bytes: Buffer): string {
   return `data:${mimeType};base64,${bytes.toString('base64')}`
 }
 
-async function requestVisionDraft(imagePath: string): Promise<GeneratedDraftResult> {
-  const apiKey = openAIApiKey()
+function normalizeKeywordList(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => normalizeKeyword(value)).filter(Boolean)))
+}
 
-  if (!apiKey) {
-    return {
-      draft: buildAssetDraft(path.basename(imagePath)),
-      mode: 'filename',
-      model: null,
-    }
+function clipKeywordCandidates(caption: string, labels: string[]): string[] {
+  const captionWords = normalizeWords(caption)
+  const multiWordCaptionPhrases = [
+    captionWords.slice(0, 2).join(' '),
+    captionWords.slice(-2).join(' '),
+  ].filter((value) => value.trim().includes(' '))
+
+  const baseKeywords = normalizeKeywordList([
+    ...labels,
+    ...multiWordCaptionPhrases,
+    ...captionWords,
+  ])
+
+  return normalizeKeywordList([
+    ...baseKeywords,
+    ...(baseKeywords.length < 14 ? genericOfflineKeywords : []),
+  ]).slice(0, 25)
+}
+
+function cleanedCaption(caption: string): string {
+  return caption.replace(/^(a|an|the)\s+/i, '').replace(/\s+/g, ' ').trim()
+}
+
+function offlineDescription(caption: string, labels: string[]): string {
+  const normalizedCaption = cleanedCaption(caption)
+  const additions = labels.filter(
+    (label) =>
+      !normalizedCaption.toLowerCase().includes(label) &&
+      !['nature', 'landscape', 'outdoors', 'travel', 'stock photo'].includes(label),
+  )
+
+  if (additions.length === 0) {
+    return `${sentenceCase(normalizedCaption)}.`
   }
 
+  const appended = additions.slice(0, 2)
+
+  if (appended.length === 1) {
+    const joiner = normalizedCaption.toLowerCase().includes(' with ') ? ' and ' : ' with '
+    return `${sentenceCase(normalizedCaption)}${joiner}${appended[0]}.`
+  }
+
+  return `${sentenceCase(normalizedCaption)}, featuring ${appended[0]} and ${appended[1]}.`
+}
+
+function offlineTitle(caption: string): string {
+  const words = cleanedCaption(caption)
+    .split(/\s+/)
+    .filter((word) => word && !['a', 'an', 'the'].includes(word.toLowerCase()))
+    .slice(0, 9)
+    .join(' ')
+  return toTitleCase(words || 'Untitled stock photo')
+}
+
+function configureOfflineModels(): void {
+  env.allowLocalModels = true
+  env.allowRemoteModels = true
+  env.cacheDir = getModelCacheRoot()
+}
+
+async function getOfflinePipelines() {
+  if (!offlinePipelinesPromise) {
+    configureOfflineModels()
+    offlinePipelinesPromise = Promise.all([
+      pipeline('image-to-text', offlineCaptionModel, { dtype: offlineModelDtype }),
+      pipeline('zero-shot-image-classification', offlineClassifierModel, { dtype: offlineModelDtype }),
+    ]).then(([captioner, classifier]) => ({
+      captioner: captioner as OfflineCaptioner,
+      classifier: classifier as OfflineClassifier,
+    }))
+  }
+
+  return offlinePipelinesPromise
+}
+
+async function requestOfflineDraft(imagePath: string): Promise<GeneratedDraftResult> {
+  const { captioner, classifier } = await getOfflinePipelines()
+  const captionOutput = await captioner(imagePath)
+  const caption = captionOutput[0]?.generated_text?.trim()
+
+  if (!caption) {
+    throw new Error('The offline model could not describe this image.')
+  }
+
+  const predictions = await classifier(imagePath, offlineCandidateLabels)
+  const strongLabels = predictions
+    .filter(
+      (prediction) =>
+        typeof prediction.label === 'string' &&
+        typeof prediction.score === 'number' &&
+        prediction.score >= 0.035,
+    )
+    .map((prediction) => prediction.label as string)
+    .slice(0, 8)
+
+  const draft = normalizeDraft({
+    title: offlineTitle(caption),
+    description: offlineDescription(caption, strongLabels),
+    keywords: clipKeywordCandidates(caption, strongLabels),
+    editorial: false,
+    mature: false,
+  })
+
+  return {
+    draft,
+    mode: 'offline',
+    message:
+      'Generated draft metadata with the local offline model. The first offline run may download local model files once.',
+    model: `${offlineCaptionModel} + ${offlineClassifierModel}`,
+  }
+}
+
+async function requestOpenAIDraft(imagePath: string, apiKey: string): Promise<GeneratedDraftResult> {
   const imageBytes = await fs.readFile(imagePath)
   const imageDataUrl = encodeImageAsDataUrl(imagePath, imageBytes)
   const response = await fetch(openAIApiUrl, {
@@ -204,28 +372,67 @@ async function requestVisionDraft(imagePath: string): Promise<GeneratedDraftResu
     draft: normalizeDraft({
       title: typeof parsed.title === 'string' ? parsed.title : '',
       description: typeof parsed.description === 'string' ? parsed.description : '',
-      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.filter((item): item is string => typeof item === 'string') : [],
+      keywords: Array.isArray(parsed.keywords)
+        ? parsed.keywords.filter((item): item is string => typeof item === 'string')
+        : [],
       editorial: Boolean(parsed.editorial),
       mature: Boolean(parsed.mature),
     }),
-    mode: 'vision',
+    mode: 'openai',
+    message: `Generated draft metadata from the actual image using ${defaultVisionModel}.`,
     model: defaultVisionModel,
   }
 }
 
-export async function generateAssetDraft(imagePath: string, filename: string): Promise<GeneratedDraftResult> {
-  try {
-    return await requestVisionDraft(imagePath)
-  } catch (error) {
-    if (!openAIApiKey()) {
-      return {
-        draft: buildAssetDraft(filename),
-        mode: 'filename',
-        model: null,
-      }
+export function buildAssetDraft(filename: string): AssetDraft {
+  const basename = path.parse(filename).name
+  const words = normalizeWords(basename)
+  const titleWords = words.slice(0, 8)
+  const title = titleWords.length > 0 ? toTitleCase(titleWords.join(' ')) : 'Untitled stock photo'
+  const keywords = Array.from(new Set(words)).slice(0, 25)
+
+  return {
+    title,
+    description: '',
+    keywords,
+    editorial: false,
+    mature: false,
+  }
+}
+
+export async function generateAssetDraft(
+  imagePath: string,
+  filename: string,
+  settings: AppSettings,
+): Promise<GeneratedDraftResult> {
+  const apiKey = resolveOpenAIApiKey(settings)
+
+  if (settings.draftGenerationMode === 'openai') {
+    if (!apiKey) {
+      throw new Error('Add an OpenAI API key in Settings before using OpenAI draft generation.')
     }
 
-    throw error
+    return requestOpenAIDraft(imagePath, apiKey)
+  }
+
+  if (settings.draftGenerationMode === 'offline') {
+    return requestOfflineDraft(imagePath)
+  }
+
+  if (apiKey) {
+    return requestOpenAIDraft(imagePath, apiKey)
+  }
+
+  try {
+    return await requestOfflineDraft(imagePath)
+  } catch {
+    return {
+      draft: buildAssetDraft(filename),
+      mode: 'filename',
+      message:
+        'The offline model was not available, so the app fell back to a simple filename-based draft.',
+      model: null,
+    }
   }
 }
 

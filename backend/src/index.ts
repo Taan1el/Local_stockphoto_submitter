@@ -19,14 +19,23 @@ import {
   ensureDataDirs,
   getExportsRoot,
   getLibraryRoot,
+  loadSettings,
   getTempRoot,
   loadState,
+  saveSettings,
   saveState,
+  toPublicSettings,
   toPublicLibraryPath,
   updateAsset,
   validateImageFilename,
 } from './storage.js'
-import type { Asset, AssetMetadata, AssetSubmissionStatus, MarketplaceId } from './types.js'
+import type {
+  AppSettings,
+  Asset,
+  AssetMetadata,
+  AssetSubmissionStatus,
+  MarketplaceId,
+} from './types.js'
 
 const defaultPort = Number(process.env.PORT ?? 4242)
 const frontendDist = path.resolve(import.meta.dirname, '..', '..', 'frontend', 'dist')
@@ -75,6 +84,15 @@ export async function createStockHubApp(): Promise<express.Express> {
 
   app.get('/api/marketplaces', (_request, response) => {
     response.json({ marketplaces: MARKETPLACES })
+  })
+
+  app.get('/api/settings', async (_request, response, next) => {
+    try {
+      const settings = await loadSettings()
+      response.json({ settings: toPublicSettings(settings) })
+    } catch (error) {
+      next(error)
+    }
   })
 
   app.get('/api/social-shortcuts', (_request, response) => {
@@ -189,6 +207,7 @@ export async function createStockHubApp(): Promise<express.Express> {
   app.post('/api/assets/:assetId/generate-draft', async (request, response, next) => {
     try {
       const state = await loadState()
+      const settings = await loadSettings()
       const assetIndex = state.assets.findIndex((asset) => asset.id === request.params.assetId)
 
       if (assetIndex === -1) {
@@ -198,7 +217,7 @@ export async function createStockHubApp(): Promise<express.Express> {
 
       const currentAsset = state.assets[assetIndex]
       const imagePath = path.join(getLibraryRoot(), currentAsset.libraryRelativePath)
-      const generated = await generateAssetDraft(imagePath, currentAsset.originalFilename)
+      const generated = await generateAssetDraft(imagePath, currentAsset.originalFilename, settings)
       const updatedAsset = {
         ...replaceAssetDraft(currentAsset, generated.draft),
         updatedAt: new Date().toISOString(),
@@ -210,11 +229,39 @@ export async function createStockHubApp(): Promise<express.Express> {
       response.json({
         asset: serializeAsset(updatedAsset),
         mode: generated.mode,
-        message:
-          generated.mode === 'vision'
-            ? `Generated draft metadata from the actual image using ${generated.model}.`
-            : 'OpenAI is not configured yet, so the app used a simple filename draft instead of image analysis.',
+        message: generated.message,
       })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.patch('/api/settings', async (request, response, next) => {
+    try {
+      const currentSettings = await loadSettings()
+      const payload = request.body as Partial<{
+        draftGenerationMode: AppSettings['draftGenerationMode']
+        openAIApiKey: string
+        clearOpenAIApiKey: boolean
+      }>
+
+      const nextSettings: AppSettings = {
+        draftGenerationMode:
+          payload.draftGenerationMode === 'openai' || payload.draftGenerationMode === 'offline'
+            ? payload.draftGenerationMode
+            : payload.draftGenerationMode === 'auto'
+              ? 'auto'
+              : currentSettings.draftGenerationMode,
+        openAIApiKey:
+          payload.clearOpenAIApiKey === true
+            ? ''
+            : typeof payload.openAIApiKey === 'string'
+              ? payload.openAIApiKey.trim()
+              : currentSettings.openAIApiKey,
+      }
+
+      await saveSettings(nextSettings)
+      response.json({ settings: toPublicSettings(nextSettings) })
     } catch (error) {
       next(error)
     }

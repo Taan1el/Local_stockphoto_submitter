@@ -1,7 +1,14 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { AppState, Asset, AssetMetadata, MarketplaceId } from './types.js'
+import type {
+  AppSettings,
+  AppState,
+  Asset,
+  AssetMetadata,
+  MarketplaceId,
+  PublicAppSettings,
+} from './types.js'
 import { allMarketplaceIds } from './marketplaces.js'
 
 const backendRoot = path.resolve(import.meta.dirname, '..')
@@ -14,6 +21,10 @@ function resolveDataRoot(): string {
 
 function getStatePath(): string {
   return path.join(resolveDataRoot(), 'state.json')
+}
+
+function getSettingsPath(): string {
+  return path.join(resolveDataRoot(), 'settings.json')
 }
 
 function emptyMetadata(): AssetMetadata {
@@ -40,6 +51,25 @@ function emptySubmissionStatus(): Record<MarketplaceId, Asset['submissionStatus'
   }
 }
 
+function defaultSettings(): AppSettings {
+  return {
+    draftGenerationMode: 'auto',
+    openAIApiKey: '',
+  }
+}
+
+function normalizeSettings(settings: Partial<AppSettings> | null | undefined): AppSettings {
+  const defaults = defaultSettings()
+
+  return {
+    draftGenerationMode:
+      settings?.draftGenerationMode === 'openai' || settings?.draftGenerationMode === 'offline'
+        ? settings.draftGenerationMode
+        : defaults.draftGenerationMode,
+    openAIApiKey: typeof settings?.openAIApiKey === 'string' ? settings.openAIApiKey.trim() : '',
+  }
+}
+
 export async function ensureDataDirs(): Promise<void> {
   const dataRoot = resolveDataRoot()
   const libraryRoot = getLibraryRoot()
@@ -47,6 +77,7 @@ export async function ensureDataDirs(): Promise<void> {
   const profilesRoot = getProfilesRoot()
   const exportsRoot = getExportsRoot()
   const statePath = getStatePath()
+  const settingsPath = getSettingsPath()
 
   await Promise.all([
     fs.mkdir(dataRoot, { recursive: true }),
@@ -54,6 +85,7 @@ export async function ensureDataDirs(): Promise<void> {
     fs.mkdir(tempRoot, { recursive: true }),
     fs.mkdir(profilesRoot, { recursive: true }),
     fs.mkdir(exportsRoot, { recursive: true }),
+    fs.mkdir(getModelCacheRoot(), { recursive: true }),
   ])
 
   try {
@@ -61,6 +93,12 @@ export async function ensureDataDirs(): Promise<void> {
   } catch {
     const initialState: AppState = { assets: [] }
     await fs.writeFile(statePath, JSON.stringify(initialState, null, 2), 'utf8')
+  }
+
+  try {
+    await fs.access(settingsPath)
+  } catch {
+    await fs.writeFile(settingsPath, JSON.stringify(defaultSettings(), null, 2), 'utf8')
   }
 }
 
@@ -75,6 +113,30 @@ export async function loadState(): Promise<AppState> {
 
 export async function saveState(state: AppState): Promise<void> {
   await fs.writeFile(getStatePath(), JSON.stringify(state, null, 2), 'utf8')
+}
+
+export async function loadSettings(): Promise<AppSettings> {
+  await ensureDataDirs()
+  const raw = await fs.readFile(getSettingsPath(), 'utf8')
+  const parsed = JSON.parse(raw) as Partial<AppSettings>
+  return normalizeSettings(parsed)
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await fs.writeFile(getSettingsPath(), JSON.stringify(normalizeSettings(settings), null, 2), 'utf8')
+}
+
+export function toPublicSettings(settings: AppSettings): PublicAppSettings {
+  const normalized = normalizeSettings(settings)
+  const key = normalized.openAIApiKey
+  const preview =
+    key.length >= 8 ? `${key.slice(0, 3)}...${key.slice(-4)}` : key.length > 0 ? 'Saved' : null
+
+  return {
+    draftGenerationMode: normalized.draftGenerationMode,
+    openAIApiKeyConfigured: key.length > 0,
+    openAIApiKeyPreview: preview,
+  }
 }
 
 export function getDataRoot(): string {
@@ -95,6 +157,10 @@ export function getProfilesRoot(): string {
 
 export function getExportsRoot(): string {
   return path.join(resolveDataRoot(), 'exports')
+}
+
+export function getModelCacheRoot(): string {
+  return path.join(resolveDataRoot(), 'models-cache')
 }
 
 export function toPublicLibraryPath(asset: Asset): string {

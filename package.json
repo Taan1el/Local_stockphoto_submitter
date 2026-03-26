@@ -10,9 +10,11 @@
     "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
     "build": "npm run build --workspace frontend && npm run build --workspace backend",
     "start": "npm run start --workspace backend",
-    "lint": "npm run lint --workspace frontend && npm run lint --workspace backend"
+    "lint": "npm run lint --workspace frontend && npm run lint --workspace backend",
+    "build:launcher": "pkg launcher/app-launcher.cjs --targets node18-win-x64 --output StockHubLauncher.exe"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "pkg": "^5.8.1"
   }
 }

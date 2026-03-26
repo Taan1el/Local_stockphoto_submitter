@@ -194,6 +194,13 @@
   align-items: center;
 }
 
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .upload-button {
   position: relative;
   display: inline-flex;
@@ -207,11 +214,56 @@
   cursor: pointer;
 }
 
+.secondary-upload {
+  background: rgba(13, 92, 98, 0.1);
+  color: #0d5c62;
+}
+
 .upload-button input {
   position: absolute;
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.dropzone {
+  display: grid;
+  gap: 6px;
+  place-items: center;
+  margin-top: 18px;
+  padding: 22px 18px;
+  border-radius: 22px;
+  border: 1px dashed rgba(13, 92, 98, 0.3);
+  background:
+    linear-gradient(135deg, rgba(255, 252, 247, 0.95), rgba(237, 247, 247, 0.92));
+  color: #0d5c62;
+  text-align: center;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.dropzone strong {
+  font-family: 'Space Grotesk', 'Trebuchet MS', sans-serif;
+  font-size: 1.05rem;
+}
+
+.dropzone span {
+  color: var(--muted);
+}
+
+.dropzone.drag-active {
+  transform: translateY(-1px);
+  border-color: rgba(13, 92, 98, 0.62);
+  box-shadow: 0 20px 40px rgba(13, 92, 98, 0.12);
+  background:
+    linear-gradient(135deg, rgba(223, 244, 242, 0.98), rgba(253, 244, 227, 0.96));
+}
+
+.dropzone.disabled {
+  opacity: 0.6;
 }
 
 .asset-list {
@@ -487,6 +539,19 @@ select:focus {
   .market-grid,
   .marketplace-editor {
     grid-template-columns: 1fr;
+  }
+
+  .panel-head {
+    align-items: stretch;
+  }
+
+  .upload-actions {
+    justify-content: stretch;
+  }
+
+  .upload-button,
+  .secondary-upload {
+    width: 100%;
   }
 
   .asset-row {

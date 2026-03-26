@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   exportCsv,
@@ -17,6 +17,10 @@ type Notice = {
   text: string
 }
 
+type DragDataTransferItem = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntry | null
+}
+
 const STATUS_OPTIONS: AssetSubmissionStatus[] = ['draft', 'ready', 'reviewing', 'submitted']
 
 const CATEGORY_LABELS: Record<MarketplaceId, string> = {
@@ -24,6 +28,8 @@ const CATEGORY_LABELS: Record<MarketplaceId, string> = {
   shutterstock: 'Shutterstock category',
   vecteezy: 'Vecteezy category',
 }
+
+const IMAGE_FILE_PATTERN = /\.(jpe?g)$/i
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -48,6 +54,69 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
+function isImportableImage(file: File): boolean {
+  return IMAGE_FILE_PATTERN.test(file.name)
+}
+
+function readDroppedFile(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject)
+  })
+}
+
+function readDirectoryEntries(entry: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => {
+    const reader = entry.createReader()
+    const collected: FileSystemEntry[] = []
+
+    function readNextBatch(): void {
+      reader.readEntries(
+        (entries) => {
+          if (entries.length === 0) {
+            resolve(collected)
+            return
+          }
+
+          collected.push(...entries)
+          readNextBatch()
+        },
+        (error) => reject(error),
+      )
+    }
+
+    readNextBatch()
+  })
+}
+
+async function collectFilesFromEntry(entry: FileSystemEntry): Promise<File[]> {
+  if (entry.isFile) {
+    return [await readDroppedFile(entry as FileSystemFileEntry)]
+  }
+
+  if (!entry.isDirectory) {
+    return []
+  }
+
+  const childEntries = await readDirectoryEntries(entry as FileSystemDirectoryEntry)
+  const nestedFiles = await Promise.all(childEntries.map((childEntry) => collectFilesFromEntry(childEntry)))
+  return nestedFiles.flat()
+}
+
+async function collectDroppedFiles(dataTransfer: DataTransfer): Promise<File[]> {
+  const items = Array.from(dataTransfer.items ?? []) as DragDataTransferItem[]
+  const entries = items
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.webkitGetAsEntry?.() ?? null)
+    .filter((entry): entry is FileSystemEntry => entry !== null)
+
+  if (entries.length > 0) {
+    const files = await Promise.all(entries.map((entry) => collectFilesFromEntry(entry)))
+    return files.flat()
+  }
+
+  return Array.from(dataTransfer.files ?? [])
+}
+
 function App() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [marketplaces, setMarketplaces] = useState<MarketplaceDefinition[]>([])
@@ -62,6 +131,9 @@ function App() {
   const [draftStatuses, setDraftStatuses] = useState<Record<MarketplaceId, AssetSubmissionStatus> | null>(
     null,
   )
+  const [isDragActive, setIsDragActive] = useState(false)
+  const dragDepthRef = useRef(0)
+  const folderInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -82,6 +154,17 @@ function App() {
         setLoading(false)
       }
     })()
+  }, [])
+
+  useEffect(() => {
+    const folderInput = folderInputRef.current
+
+    if (!folderInput) {
+      return
+    }
+
+    folderInput.setAttribute('webkitdirectory', '')
+    folderInput.setAttribute('directory', '')
   }, [])
 
   const selectedAsset = useMemo(
@@ -106,8 +189,24 @@ function App() {
     )
   }
 
-  async function handleImport(fileList: FileList | null): Promise<void> {
-    if (!fileList || fileList.length === 0) {
+  async function handleImport(fileList: FileList | File[] | null): Promise<void> {
+    const providedFiles = fileList ? Array.from(fileList) : []
+
+    if (providedFiles.length === 0) {
+      return
+    }
+
+    const importableFiles = providedFiles.filter((file) => isImportableImage(file))
+    const skippedCount = providedFiles.length - importableFiles.length
+
+    if (importableFiles.length === 0) {
+      setNotice({
+        kind: 'error',
+        text:
+          skippedCount > 0
+            ? `No JPG images found. Skipped ${skippedCount} unsupported item${skippedCount === 1 ? '' : 's'}.`
+            : 'No JPG images found to import.',
+      })
       return
     }
 
@@ -115,12 +214,24 @@ function App() {
     setNotice(null)
 
     try {
-      const imported = await importAssets(fileList)
+      const imported = await importAssets(importableFiles)
+
+      if (imported.length === 0) {
+        setNotice({
+          kind: 'error',
+          text: 'No images were imported. Please try again.',
+        })
+        return
+      }
+
       setAssets((currentAssets) => [...imported, ...currentAssets])
       setSelectedAssetId(imported[0]?.id ?? selectedAssetId)
       setNotice({
         kind: 'success',
-        text: `Imported ${imported.length} photo${imported.length === 1 ? '' : 's'} into your local library.`,
+        text:
+          skippedCount > 0
+            ? `Imported ${imported.length} JPG photo${imported.length === 1 ? '' : 's'} and skipped ${skippedCount} unsupported item${skippedCount === 1 ? '' : 's'}.`
+            : `Imported ${imported.length} photo${imported.length === 1 ? '' : 's'} into your local library.`,
       })
     } catch (error) {
       setNotice({
@@ -129,6 +240,61 @@ function App() {
       })
     } finally {
       setUploading(false)
+    }
+  }
+
+  function handleDragEnter(event: React.DragEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (uploading) {
+      return
+    }
+
+    dragDepthRef.current += 1
+    setIsDragActive(true)
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (uploading) {
+      return
+    }
+
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false)
+    }
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLElement>): Promise<void> {
+    event.preventDefault()
+    event.stopPropagation()
+
+    dragDepthRef.current = 0
+    setIsDragActive(false)
+
+    if (uploading) {
+      return
+    }
+
+    try {
+      const droppedFiles = await collectDroppedFiles(event.dataTransfer)
+      await handleImport(droppedFiles)
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Unable to read the dropped files.',
+      })
     }
   }
 
@@ -363,23 +529,51 @@ function App() {
               <p className="panel-kicker">Library</p>
               <h2>Imported photos</h2>
             </div>
-            <label className="upload-button">
-              {uploading ? 'Importing...' : 'Import photos'}
-              <input
-                accept=".jpg,.jpeg"
-                disabled={uploading}
-                multiple
-                type="file"
-                onChange={(event) => {
-                  void handleImport(event.target.files)
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
+            <div className="upload-actions">
+              <label className="upload-button">
+                {uploading ? 'Importing...' : 'Import photos'}
+                <input
+                  accept=".jpg,.jpeg"
+                  disabled={uploading}
+                  multiple
+                  type="file"
+                  onChange={(event) => {
+                    void handleImport(event.target.files)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+              <label className="upload-button secondary-upload">
+                Import folder
+                <input
+                  ref={folderInputRef}
+                  accept=".jpg,.jpeg"
+                  disabled={uploading}
+                  multiple
+                  type="file"
+                  onChange={(event) => {
+                    void handleImport(event.target.files)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+            </div>
           </div>
           <p className="panel-copy">
             Import JPG photos into a managed local library so your CSV filenames stay consistent.
           </p>
+          <div
+            className={`dropzone ${isDragActive ? 'drag-active' : ''} ${uploading ? 'disabled' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={(event) => {
+              void handleDrop(event)
+            }}
+          >
+            <strong>Drop a JPG or a whole folder here</strong>
+            <span>Nested folders are supported. Non-JPG files will be skipped.</span>
+          </div>
           <div className="asset-list">
             {assets.length === 0 ? (
               <div className="empty-state">

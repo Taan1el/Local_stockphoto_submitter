@@ -10,6 +10,7 @@ This MVP is built around the workflow you chose:
 - keep contributor sessions stored locally on your PC
 - export CSV files for Adobe Stock, Shutterstock, and Vecteezy
 - open each marketplace dashboard or upload page from the same app
+- open Facebook and X posting pages in the same saved Chrome profile
 
 ## Why this shape
 
@@ -20,6 +21,12 @@ Adobe Stock, Shutterstock, and Vecteezy do not currently offer a clean public co
 - persistent browser sessions for manual upload/review
 
 ## Run it
+
+Optional for image-aware draft metadata:
+
+```bash
+set OPENAI_API_KEY=your_key_here
+```
 
 Install dependencies:
 
@@ -72,9 +79,11 @@ For the Electron desktop build, app data is stored under the app user-data direc
 
 - photos only
 - JPG import
-- draft metadata generation from filenames
+- image-aware draft metadata when `OPENAI_API_KEY` is configured
+- filename fallback draft when no OpenAI key is configured
 - per-marketplace category fields
 - per-marketplace status tracking
+- quick posting shortcuts for Facebook and X
 - CSV export for:
   - Adobe Stock
   - Shutterstock

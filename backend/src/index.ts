@@ -7,10 +7,11 @@ import exifr from 'exifr'
 import express from 'express'
 import { imageSizeFromFile } from 'image-size/fromFile'
 import multer from 'multer'
-import { openMarketplacePage } from './browser.js'
+import { openExternalPage, openMarketplacePage } from './browser.js'
 import { buildCsv } from './csv.js'
-import { applyDraftToAsset } from './metadata.js'
+import { applyDraftToAsset, generateAssetDraft, replaceAssetDraft } from './metadata.js'
 import { getTypedMarketplace, MARKETPLACES } from './marketplaces.js'
+import { getTypedSocialShortcut, SOCIAL_SHORTCUTS } from './socialShortcuts.js'
 import {
   createAssetFromImportedFile,
   defaultAssetSort,
@@ -74,6 +75,10 @@ export async function createStockHubApp(): Promise<express.Express> {
 
   app.get('/api/marketplaces', (_request, response) => {
     response.json({ marketplaces: MARKETPLACES })
+  })
+
+  app.get('/api/social-shortcuts', (_request, response) => {
+    response.json({ shortcuts: SOCIAL_SHORTCUTS })
   })
 
   app.get('/api/assets', async (_request, response, next) => {
@@ -183,14 +188,33 @@ export async function createStockHubApp(): Promise<express.Express> {
 
   app.post('/api/assets/:assetId/generate-draft', async (request, response, next) => {
     try {
-      const asset = await updateAsset(request.params.assetId, applyDraftToAsset)
+      const state = await loadState()
+      const assetIndex = state.assets.findIndex((asset) => asset.id === request.params.assetId)
 
-      if (!asset) {
+      if (assetIndex === -1) {
         response.status(404).json({ error: 'Asset not found.' })
         return
       }
 
-      response.json({ asset: serializeAsset(asset) })
+      const currentAsset = state.assets[assetIndex]
+      const imagePath = path.join(getLibraryRoot(), currentAsset.libraryRelativePath)
+      const generated = await generateAssetDraft(imagePath, currentAsset.originalFilename)
+      const updatedAsset = {
+        ...replaceAssetDraft(currentAsset, generated.draft),
+        updatedAt: new Date().toISOString(),
+      }
+
+      state.assets[assetIndex] = updatedAsset
+      await saveState(state)
+
+      response.json({
+        asset: serializeAsset(updatedAsset),
+        mode: generated.mode,
+        message:
+          generated.mode === 'vision'
+            ? `Generated draft metadata from the actual image using ${generated.model}.`
+            : 'OpenAI is not configured yet, so the app used a simple filename draft instead of image analysis.',
+      })
     } catch (error) {
       next(error)
     }
@@ -216,10 +240,33 @@ export async function createStockHubApp(): Promise<express.Express> {
       const marketplace = getTypedMarketplace(request.params.marketplaceId)
       const target = request.body?.target === 'upload' ? 'upload' : 'dashboard'
       const opened = await openMarketplacePage(marketplace, target)
+      const destinationLabel =
+        opened.mode === 'chrome-profile'
+          ? 'your Chrome Profile 4 session'
+          : opened.mode === 'system-browser'
+            ? 'your default browser'
+            : 'the app window'
 
       response.json({
         marketplace: marketplace.name,
-        message: `Opened ${marketplace.name} ${target} page in your Chrome Profile 4 session.`,
+        message: `Opened ${marketplace.name} ${target} page in ${destinationLabel}.`,
+        url: opened.url,
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/social-shortcuts/:shortcutId/open', async (request, response, next) => {
+    try {
+      const shortcut = getTypedSocialShortcut(request.params.shortcutId)
+      const opened = await openExternalPage(shortcut.openUrl)
+      const destinationLabel =
+        opened.mode === 'chrome-profile' ? 'your Chrome Profile 4 session' : 'your default browser'
+
+      response.json({
+        shortcut: shortcut.name,
+        message: `Opened ${shortcut.name} in ${destinationLabel}.`,
         url: opened.url,
       })
     } catch (error) {

@@ -106,6 +106,15 @@
   margin-top: 24px;
 }
 
+.social-section {
+  margin-top: 18px;
+}
+
+.social-grid {
+  margin-top: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .market-card,
 .library-panel,
 .editor-panel {
@@ -192,6 +201,27 @@
   justify-content: space-between;
   gap: 16px;
   align-items: center;
+}
+
+.section-head,
+.advanced-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.section-head h2,
+.advanced-head h3 {
+  margin: 0;
+  font-family: 'Space Grotesk', 'Trebuchet MS', sans-serif;
+}
+
+.section-copy,
+.advanced-copy {
+  margin: 0;
+  color: var(--muted);
+  max-width: 60ch;
 }
 
 .upload-actions {
@@ -467,6 +497,14 @@ select:focus {
   margin-top: 18px;
 }
 
+.advanced-section {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(126, 91, 49, 0.1);
+}
+
 .marketplace-fieldset h3 {
   margin: 0 0 14px;
   font-family: 'Space Grotesk', 'Trebuchet MS', sans-serif;
@@ -520,7 +558,8 @@ select:focus {
 
 @media (max-width: 1180px) {
   .market-grid,
-  .marketplace-editor {
+  .marketplace-editor,
+  .social-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -537,12 +576,18 @@ select:focus {
   }
 
   .market-grid,
-  .marketplace-editor {
+  .marketplace-editor,
+  .social-grid {
     grid-template-columns: 1fr;
   }
 
   .panel-head {
     align-items: stretch;
+  }
+
+  .section-head,
+  .advanced-head {
+    flex-direction: column;
   }
 
   .upload-actions {

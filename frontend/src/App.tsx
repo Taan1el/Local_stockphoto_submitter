@@ -4,13 +4,22 @@ import {
   exportCsv,
   fetchAssets,
   fetchMarketplaces,
+  fetchSocialShortcuts,
   generateDraft,
   importAssets,
   openMarketplacePage,
+  openSocialShortcut,
   removeAsset,
   updateAsset,
 } from './api'
-import type { Asset, AssetSubmissionStatus, MarketplaceDefinition, MarketplaceId } from './types'
+import type {
+  Asset,
+  AssetSubmissionStatus,
+  MarketplaceDefinition,
+  MarketplaceId,
+  SocialShortcutDefinition,
+  SocialShortcutId,
+} from './types'
 
 type Notice = {
   kind: 'success' | 'error'
@@ -120,30 +129,37 @@ async function collectDroppedFiles(dataTransfer: DataTransfer): Promise<File[]> 
 function App() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [marketplaces, setMarketplaces] = useState<MarketplaceDefinition[]>([])
+  const [socialShortcuts, setSocialShortcuts] = useState<SocialShortcutDefinition[]>([])
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   const [selectedForExport, setSelectedForExport] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [workingMarketplaceId, setWorkingMarketplaceId] = useState<MarketplaceId | null>(null)
+  const [workingSocialShortcutId, setWorkingSocialShortcutId] = useState<SocialShortcutId | null>(
+    null,
+  )
   const [notice, setNotice] = useState<Notice | null>(null)
   const [draftForm, setDraftForm] = useState<Asset['metadata'] | null>(null)
   const [draftStatuses, setDraftStatuses] = useState<Record<MarketplaceId, AssetSubmissionStatus> | null>(
     null,
   )
   const [isDragActive, setIsDragActive] = useState(false)
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false)
   const dragDepthRef = useRef(0)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     void (async () => {
       try {
-        const [loadedAssets, loadedMarketplaces] = await Promise.all([
+        const [loadedAssets, loadedMarketplaces, loadedShortcuts] = await Promise.all([
           fetchAssets(),
           fetchMarketplaces(),
+          fetchSocialShortcuts(),
         ])
         setAssets(loadedAssets)
         setMarketplaces(loadedMarketplaces)
+        setSocialShortcuts(loadedShortcuts)
         setSelectedAssetId(loadedAssets[0]?.id ?? null)
       } catch (error) {
         setNotice({
@@ -176,11 +192,16 @@ function App() {
     if (!selectedAsset) {
       setDraftForm(null)
       setDraftStatuses(null)
+      setShowAdvancedFields(false)
       return
     }
 
     setDraftForm(selectedAsset.metadata)
     setDraftStatuses(selectedAsset.submissionStatus)
+    setShowAdvancedFields(
+      Object.values(selectedAsset.metadata.categories).some((value) => value.trim().length > 0) ||
+        Object.values(selectedAsset.submissionStatus).some((status) => status !== 'draft'),
+    )
   }, [selectedAsset])
 
   function replaceAsset(updatedAsset: Asset): void {
@@ -333,12 +354,13 @@ function App() {
     }
 
     setSaving(true)
+    setNotice(null)
     try {
-      const updated = await generateDraft(selectedAsset.id)
-      replaceAsset(updated)
+      const result = await generateDraft(selectedAsset.id)
+      replaceAsset(result.asset)
       setNotice({
         kind: 'success',
-        text: 'Draft metadata generated from the filename.',
+        text: result.message,
       })
     } catch (error) {
       setNotice({
@@ -347,6 +369,26 @@ function App() {
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSocialShortcut(shortcutId: SocialShortcutId): Promise<void> {
+    setWorkingSocialShortcutId(shortcutId)
+    setNotice(null)
+
+    try {
+      const message = await openSocialShortcut(shortcutId)
+      setNotice({
+        kind: 'success',
+        text: message,
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Unable to open the social shortcut.',
+      })
+    } finally {
+      setWorkingSocialShortcutId(null)
     }
   }
 
@@ -453,8 +495,8 @@ function App() {
           <h1>Prepare once, review everywhere.</h1>
           <p className="hero-copy">
             This MVP keeps your contributor sessions on your PC, lets you prep photo metadata in one
-            place, and exports marketplace-ready CSV files for Adobe Stock, Shutterstock, and
-            Vecteezy.
+            place, exports marketplace-ready CSV files for Adobe Stock, Shutterstock, and Vecteezy,
+            and gives you quick Chrome shortcuts for social posting.
           </p>
         </div>
         <div className="hero-stats">
@@ -511,6 +553,43 @@ function App() {
           </article>
         ))}
       </section>
+
+      {socialShortcuts.length > 0 ? (
+        <section className="social-section">
+          <div className="section-head">
+            <div>
+              <p className="panel-kicker">Social</p>
+              <h2>Posting shortcuts</h2>
+            </div>
+            <p className="section-copy">
+              These buttons open your logged-in Chrome Profile 4 pages. You will still attach the
+              image manually on the site.
+            </p>
+          </div>
+          <div className="market-grid social-grid">
+            {socialShortcuts.map((shortcut) => (
+              <article className="market-card" key={shortcut.id}>
+                <div className="market-card-head">
+                  <div>
+                    <h2>{shortcut.name}</h2>
+                    <p>{shortcut.description}</p>
+                  </div>
+                  <span className="pill">Chrome Profile 4</span>
+                </div>
+                <div className="market-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={workingSocialShortcutId === shortcut.id}
+                    onClick={() => void handleSocialShortcut(shortcut.id)}
+                  >
+                    Open in Chrome
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="workspace">
         <aside className="library-panel">
@@ -627,7 +706,7 @@ function App() {
                 </div>
                 <div className="editor-actions">
                   <button className="secondary-button" disabled={saving} onClick={() => void handleGenerateDraft()}>
-                    Generate draft
+                    Generate AI draft
                   </button>
                   <button className="ghost-button" onClick={() => void handleDelete()}>
                     Remove
@@ -736,55 +815,76 @@ function App() {
                 </div>
               </div>
 
-              <div className="marketplace-editor">
-                {(['adobe-stock', 'shutterstock', 'vecteezy'] as MarketplaceId[]).map((marketplaceId) => (
-                  <article className="marketplace-fieldset" key={marketplaceId}>
-                    <h3>{CATEGORY_LABELS[marketplaceId]}</h3>
-                    <label>
-                      Category or category code
-                      <input
-                        type="text"
-                        value={draftForm.categories[marketplaceId]}
-                        onChange={(event) =>
-                          setDraftForm((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  categories: {
-                                    ...current.categories,
-                                    [marketplaceId]: event.target.value,
-                                  },
-                                }
-                              : current,
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Submission status
-                      <select
-                        value={draftStatuses[marketplaceId]}
-                        onChange={(event) =>
-                          setDraftStatuses((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  [marketplaceId]: event.target.value as AssetSubmissionStatus,
-                                }
-                              : current,
-                          )
-                        }
-                      >
-                        {STATUS_OPTIONS.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </article>
-                ))}
-              </div>
+              <section className="advanced-section">
+                <div className="advanced-head">
+                  <div>
+                    <p className="panel-kicker">Advanced</p>
+                    <h3>Advanced export fields</h3>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setShowAdvancedFields((current) => !current)}
+                  >
+                    {showAdvancedFields ? 'Hide fields' : 'Show fields'}
+                  </button>
+                </div>
+                <p className="advanced-copy">
+                  This section is only for marketplace category codes and your own stock-site status
+                  tracking for CSV export. If you just want fast Chrome uploads, you can ignore it.
+                </p>
+                {showAdvancedFields ? (
+                  <div className="marketplace-editor">
+                    {(['adobe-stock', 'shutterstock', 'vecteezy'] as MarketplaceId[]).map((marketplaceId) => (
+                      <article className="marketplace-fieldset" key={marketplaceId}>
+                        <h3>{CATEGORY_LABELS[marketplaceId]}</h3>
+                        <label>
+                          Category or category code
+                          <input
+                            type="text"
+                            value={draftForm.categories[marketplaceId]}
+                            onChange={(event) =>
+                              setDraftForm((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      categories: {
+                                        ...current.categories,
+                                        [marketplaceId]: event.target.value,
+                                      },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          Submission status
+                          <select
+                            value={draftStatuses[marketplaceId]}
+                            onChange={(event) =>
+                              setDraftStatuses((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      [marketplaceId]: event.target.value as AssetSubmissionStatus,
+                                    }
+                                  : current,
+                              )
+                            }
+                          >
+                            {STATUS_OPTIONS.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
 
               <div className="footer-actions">
                 <button

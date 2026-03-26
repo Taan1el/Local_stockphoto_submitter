@@ -21,7 +21,7 @@ export const MARKETPLACES: MarketplaceDefinition[] = [
     uploadMethods: ['Web dashboard', 'FTPS', 'CSV metadata import'],
     csvSupported: true,
     dashboardUrl: 'https://submit.shutterstock.com/',
-    uploadUrl: 'https://submit.shutterstock.com/portfolio/upload',
+    uploadUrl: 'https://submit.shutterstock.com/dashboard',
   },
   {
     id: 'vecteezy',

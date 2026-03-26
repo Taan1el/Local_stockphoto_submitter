@@ -9,7 +9,8 @@ const activeContexts = new Map<string, BrowserContext>()
 const defaultChromeProfile = process.env.STOCK_HUB_CHROME_PROFILE ?? 'Profile 4'
 
 type MarketplacePageTarget = 'dashboard' | 'upload'
-type MarketplacePageResult = { url: string }
+type OpenMode = 'chrome-profile' | 'playwright' | 'custom' | 'system-browser'
+type MarketplacePageResult = { url: string; mode: OpenMode }
 type MarketplacePageOpener = (
   marketplace: MarketplaceDefinition,
   target: MarketplacePageTarget,
@@ -63,7 +64,7 @@ async function findExistingPath(candidates: string[]): Promise<string | null> {
   return null
 }
 
-async function tryOpenMarketplaceInChrome(url: string): Promise<boolean> {
+async function tryOpenInChromeProfile(url: string): Promise<boolean> {
   const chromeUserDataDir = getChromeUserDataDir()
 
   if (!chromeUserDataDir) {
@@ -103,6 +104,20 @@ async function tryOpenMarketplaceInChrome(url: string): Promise<boolean> {
   return true
 }
 
+async function openInSystemBrowser(url: string): Promise<boolean> {
+  try {
+    const browserProcess = spawn('cmd', ['/c', 'start', '', url], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    })
+    browserProcess.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function getOrCreateContext(marketplaceId: string): Promise<BrowserContext> {
   const existing = activeContexts.get(marketplaceId)
 
@@ -140,12 +155,16 @@ export async function openMarketplacePage(
 ): Promise<MarketplacePageResult> {
   const url = target === 'dashboard' ? marketplace.dashboardUrl : marketplace.uploadUrl
 
-  if (await tryOpenMarketplaceInChrome(url)) {
-    return { url }
+  if (await tryOpenInChromeProfile(url)) {
+    return { url, mode: 'chrome-profile' }
   }
 
   if (customMarketplacePageOpener) {
-    return customMarketplacePageOpener(marketplace, target)
+    const opened = await customMarketplacePageOpener(marketplace, target)
+    return {
+      ...opened,
+      mode: opened.mode ?? 'custom',
+    }
   }
 
   const context = await getOrCreateContext(marketplace.id)
@@ -153,5 +172,17 @@ export async function openMarketplacePage(
   await page.goto(url, { waitUntil: 'domcontentloaded' })
   await bringPageToFront(page)
 
-  return { url }
+  return { url, mode: 'playwright' }
+}
+
+export async function openExternalPage(url: string): Promise<MarketplacePageResult> {
+  if (await tryOpenInChromeProfile(url)) {
+    return { url, mode: 'chrome-profile' }
+  }
+
+  if (await openInSystemBrowser(url)) {
+    return { url, mode: 'system-browser' }
+  }
+
+  throw new Error('Unable to open the requested page in Chrome or the default browser.')
 }

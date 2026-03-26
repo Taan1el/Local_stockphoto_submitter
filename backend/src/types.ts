@@ -1,4 +1,5 @@
 export type MarketplaceId = 'adobe-stock' | 'shutterstock' | 'vecteezy'
+export type SocialShortcutId = 'facebook' | 'x'
 
 export interface MarketplaceDefinition {
   id: MarketplaceId
@@ -9,6 +10,13 @@ export interface MarketplaceDefinition {
   csvSupported: boolean
   dashboardUrl: string
   uploadUrl: string
+}
+
+export interface SocialShortcutDefinition {
+  id: SocialShortcutId
+  name: string
+  description: string
+  openUrl: string
 }
 
 export type AssetSubmissionStatus = 'draft' | 'ready' | 'reviewing' | 'submitted'
@@ -45,4 +53,6 @@ export interface AssetDraft {
   title: string
   description: string
   keywords: string[]
+  editorial: boolean
+  mature: boolean
 }

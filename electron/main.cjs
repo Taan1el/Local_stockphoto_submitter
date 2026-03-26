@@ -105,7 +105,7 @@ async function openMarketplaceWindow(marketplace, target) {
   marketplaceWindow.show()
   marketplaceWindow.focus()
 
-  return { url }
+  return { url, mode: 'custom' }
 }
 
 function createMainWindow(appUrl) {

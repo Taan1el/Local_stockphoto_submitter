@@ -1,4 +1,11 @@
-import type { Asset, AssetSubmissionStatus, MarketplaceDefinition, MarketplaceId } from './types'
+import type {
+  Asset,
+  AssetSubmissionStatus,
+  MarketplaceDefinition,
+  MarketplaceId,
+  SocialShortcutDefinition,
+  SocialShortcutId,
+} from './types'
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -19,6 +26,12 @@ export async function fetchMarketplaces(): Promise<MarketplaceDefinition[]> {
   const response = await fetch('/api/marketplaces')
   const data = await parseJson<{ marketplaces: MarketplaceDefinition[] }>(response)
   return data.marketplaces
+}
+
+export async function fetchSocialShortcuts(): Promise<SocialShortcutDefinition[]> {
+  const response = await fetch('/api/social-shortcuts')
+  const data = await parseJson<{ shortcuts: SocialShortcutDefinition[] }>(response)
+  return data.shortcuts
 }
 
 export async function importAssets(files: FileList | File[]): Promise<Asset[]> {
@@ -55,12 +68,19 @@ export async function updateAsset(payload: {
   return data.asset
 }
 
-export async function generateDraft(assetId: string): Promise<Asset> {
+export async function generateDraft(assetId: string): Promise<{
+  asset: Asset
+  message: string
+  mode: 'vision' | 'filename'
+}> {
   const response = await fetch(`/api/assets/${assetId}/generate-draft`, {
     method: 'POST',
   })
-  const data = await parseJson<{ asset: Asset }>(response)
-  return data.asset
+  return parseJson<{
+    asset: Asset
+    message: string
+    mode: 'vision' | 'filename'
+  }>(response)
 }
 
 export async function removeAsset(assetId: string): Promise<void> {
@@ -84,6 +104,14 @@ export async function openMarketplacePage(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ target }),
+  })
+  const data = await parseJson<{ message: string }>(response)
+  return data.message
+}
+
+export async function openSocialShortcut(shortcutId: SocialShortcutId): Promise<string> {
+  const response = await fetch(`/api/social-shortcuts/${shortcutId}/open`, {
+    method: 'POST',
   })
   const data = await parseJson<{ message: string }>(response)
   return data.message

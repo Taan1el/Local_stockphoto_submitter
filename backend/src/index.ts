@@ -219,7 +219,7 @@ export async function createStockHubApp(): Promise<express.Express> {
 
       response.json({
         marketplace: marketplace.name,
-        message: `Opened ${marketplace.name} ${target} page in a persistent browser session.`,
+        message: `Opened ${marketplace.name} ${target} page in your Chrome Profile 4 session.`,
         url: opened.url,
       })
     } catch (error) {

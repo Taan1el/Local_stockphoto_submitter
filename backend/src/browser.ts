@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { BrowserContext, Page } from 'playwright'
@@ -5,6 +6,8 @@ import { getProfilesRoot } from './storage.js'
 import type { MarketplaceDefinition } from './types.js'
 
 const activeContexts = new Map<string, BrowserContext>()
+const defaultChromeProfile = process.env.STOCK_HUB_CHROME_PROFILE ?? 'Profile 4'
+
 type MarketplacePageTarget = 'dashboard' | 'upload'
 type MarketplacePageResult = { url: string }
 type MarketplacePageOpener = (
@@ -16,6 +19,88 @@ let customMarketplacePageOpener: MarketplacePageOpener | null = null
 
 export function setMarketplacePageOpener(opener: MarketplacePageOpener | null): void {
   customMarketplacePageOpener = opener
+}
+
+function getChromeUserDataDir(): string | null {
+  if (process.env.STOCK_HUB_CHROME_USER_DATA_DIR) {
+    return path.resolve(process.env.STOCK_HUB_CHROME_USER_DATA_DIR)
+  }
+
+  if (!process.env.LOCALAPPDATA) {
+    return null
+  }
+
+  return path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'User Data')
+}
+
+function getChromeExecutableCandidates(): string[] {
+  const candidates = [
+    process.env.STOCK_HUB_CHROME_PATH,
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
+      : null,
+    process.env.PROGRAMFILES
+      ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe')
+      : null,
+    process.env['PROGRAMFILES(X86)']
+      ? path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application', 'chrome.exe')
+      : null,
+  ]
+
+  return candidates.filter((candidate): candidate is string => Boolean(candidate))
+}
+
+async function findExistingPath(candidates: string[]): Promise<string | null> {
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate)
+      return candidate
+    } catch {
+      // Try the next candidate path.
+    }
+  }
+
+  return null
+}
+
+async function tryOpenMarketplaceInChrome(url: string): Promise<boolean> {
+  const chromeUserDataDir = getChromeUserDataDir()
+
+  if (!chromeUserDataDir) {
+    return false
+  }
+
+  const chromeExecutable = await findExistingPath(getChromeExecutableCandidates())
+
+  if (!chromeExecutable) {
+    return false
+  }
+
+  const profilePath = path.join(chromeUserDataDir, defaultChromeProfile)
+
+  try {
+    await fs.access(profilePath)
+  } catch {
+    return false
+  }
+
+  const chromeProcess = spawn(
+    chromeExecutable,
+    [
+      `--user-data-dir=${chromeUserDataDir}`,
+      `--profile-directory=${defaultChromeProfile}`,
+      '--new-tab',
+      url,
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    },
+  )
+
+  chromeProcess.unref()
+  return true
 }
 
 async function getOrCreateContext(marketplaceId: string): Promise<BrowserContext> {
@@ -53,13 +138,17 @@ export async function openMarketplacePage(
   marketplace: MarketplaceDefinition,
   target: MarketplacePageTarget,
 ): Promise<MarketplacePageResult> {
+  const url = target === 'dashboard' ? marketplace.dashboardUrl : marketplace.uploadUrl
+
+  if (await tryOpenMarketplaceInChrome(url)) {
+    return { url }
+  }
+
   if (customMarketplacePageOpener) {
     return customMarketplacePageOpener(marketplace, target)
   }
 
   const context = await getOrCreateContext(marketplace.id)
-  const url = target === 'dashboard' ? marketplace.dashboardUrl : marketplace.uploadUrl
-
   const page = await context.newPage()
   await page.goto(url, { waitUntil: 'domcontentloaded' })
   await bringPageToFront(page)

@@ -379,15 +379,12 @@ function App() {
     }
   }
 
-  async function handleMarketplaceAction(
-    marketplaceId: MarketplaceId,
-    target: 'dashboard' | 'upload',
-  ): Promise<void> {
+  async function handleMarketplaceAction(marketplaceId: MarketplaceId): Promise<void> {
     setWorkingMarketplaceId(marketplaceId)
     setNotice(null)
 
     try {
-      const message = await openMarketplacePage(marketplaceId, target)
+      const message = await openMarketplacePage(marketplaceId, 'upload')
       setNotice({
         kind: 'success',
         text: message,
@@ -486,7 +483,7 @@ function App() {
                 <h2>{marketplace.name}</h2>
                 <p>{marketplace.description}</p>
               </div>
-              <span className="pill">Sessions stay local</span>
+              <span className="pill">Chrome Profile 4</span>
             </div>
             <div className="market-meta">
               {marketplace.uploadMethods.map((method) => (
@@ -499,16 +496,9 @@ function App() {
               <button
                 className="secondary-button"
                 disabled={workingMarketplaceId === marketplace.id}
-                onClick={() => void handleMarketplaceAction(marketplace.id, 'dashboard')}
+                onClick={() => void handleMarketplaceAction(marketplace.id)}
               >
-                Open session
-              </button>
-              <button
-                className="secondary-button"
-                disabled={workingMarketplaceId === marketplace.id}
-                onClick={() => void handleMarketplaceAction(marketplace.id, 'upload')}
-              >
-                Open upload
+                Open in Chrome
               </button>
               <button
                 className="primary-button"

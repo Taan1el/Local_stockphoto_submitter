@@ -487,14 +487,19 @@
 
 .preview-panel,
 .marketplace-fieldset,
-.advanced-section {
+.advanced-section,
+.social-drafts-section,
+.social-draft-card,
+.poll-editor {
   border-radius: 22px;
   background: var(--panel-soft);
   border: 1px solid var(--border);
 }
 
 .preview-panel,
-.marketplace-fieldset {
+.marketplace-fieldset,
+.social-draft-card,
+.poll-editor {
   padding: 18px;
 }
 
@@ -588,6 +593,73 @@ select:focus {
 .advanced-section {
   margin-top: 18px;
   padding: 18px;
+}
+
+.social-drafts-section {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.social-draft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.social-draft-card {
+  display: grid;
+  gap: 14px;
+}
+
+.social-draft-head,
+.poll-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.social-draft-head h3,
+.poll-editor-head h4 {
+  margin: 0;
+  font-family: 'Space Grotesk', 'Trebuchet MS', sans-serif;
+}
+
+.social-draft-head p,
+.poll-empty span {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+}
+
+.social-draft-meta,
+.poll-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.poll-editor {
+  display: grid;
+  gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    rgba(255, 255, 255, 0.02);
+}
+
+.poll-empty {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  text-align: center;
+  border-radius: 18px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.poll-empty p {
+  margin: 0;
+  font-weight: 600;
 }
 
 .marketplace-fieldset h3 {
@@ -689,7 +761,8 @@ select:focus {
 @media (max-width: 1180px) {
   .market-grid,
   .marketplace-editor,
-  .social-grid {
+  .social-grid,
+  .social-draft-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -712,13 +785,18 @@ select:focus {
 
   .market-grid,
   .marketplace-editor,
-  .social-grid {
+  .social-grid,
+  .social-draft-grid,
+  .social-draft-meta,
+  .poll-options-grid {
     grid-template-columns: 1fr;
   }
 
   .panel-head,
   .section-head,
-  .advanced-head {
+  .advanced-head,
+  .social-draft-head,
+  .poll-editor-head {
     flex-direction: column;
     align-items: stretch;
   }

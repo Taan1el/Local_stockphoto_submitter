@@ -7,6 +7,7 @@ import {
   fetchSettings,
   fetchSocialShortcuts,
   generateDraft,
+  generateSocialDrafts,
   importAssets,
   openMarketplacePage,
   openSocialShortcut,
@@ -17,10 +18,12 @@ import {
 import type {
   AppSettings,
   Asset,
+  AssetSocialDrafts,
   AssetSubmissionStatus,
   DraftGenerationMode,
   MarketplaceDefinition,
   MarketplaceId,
+  SocialPlatformDraft,
   SocialShortcutDefinition,
   SocialShortcutId,
 } from './types'
@@ -60,6 +63,15 @@ const CATEGORY_LABELS: Record<MarketplaceId, string> = {
 }
 
 const IMAGE_FILE_PATTERN = /\.(jpe?g)$/i
+const X_POLL_DURATION_OPTIONS = [1, 6, 12, 24, 48, 72, 168]
+
+function createEmptyPoll() {
+  return {
+    question: '',
+    options: ['', ''],
+    durationHours: 24,
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -86,6 +98,25 @@ function downloadBlob(blob: Blob, filename: string): void {
 
 function isImportableImage(file: File): boolean {
   return IMAGE_FILE_PATTERN.test(file.name)
+}
+
+function hashtagsToString(hashtags: string[]): string {
+  return hashtags.join(', ')
+}
+
+function parseHashtags(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+}
+
+function buildCombinedPostText(draft: SocialPlatformDraft): string {
+  return [draft.caption.trim(), draft.hashtags.join(' ').trim()].filter(Boolean).join('\n\n')
+}
+
+function buildPollCopy(draft: NonNullable<AssetSocialDrafts['x']['poll']>): string {
+  return [draft.question, ...draft.options.filter(Boolean)].join('\n')
 }
 
 function readDroppedFile(entry: FileSystemFileEntry): Promise<File> {
@@ -160,12 +191,15 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [generatingDraftState, setGeneratingDraftState] = useState(false)
+  const [generatingSocialState, setGeneratingSocialState] = useState(false)
   const [workingMarketplaceId, setWorkingMarketplaceId] = useState<MarketplaceId | null>(null)
   const [workingSocialShortcutId, setWorkingSocialShortcutId] = useState<SocialShortcutId | null>(
     null,
   )
   const [notice, setNotice] = useState<Notice | null>(null)
   const [draftForm, setDraftForm] = useState<Asset['metadata'] | null>(null)
+  const [socialDraftForm, setSocialDraftForm] = useState<AssetSocialDrafts | null>(null)
   const [draftStatuses, setDraftStatuses] = useState<Record<MarketplaceId, AssetSubmissionStatus> | null>(
     null,
   )
@@ -219,12 +253,14 @@ function App() {
   useEffect(() => {
     if (!selectedAsset) {
       setDraftForm(null)
+      setSocialDraftForm(null)
       setDraftStatuses(null)
       setShowAdvancedFields(false)
       return
     }
 
     setDraftForm(selectedAsset.metadata)
+    setSocialDraftForm(selectedAsset.socialDrafts)
     setDraftStatuses(selectedAsset.submissionStatus)
     setShowAdvancedFields(
       Object.values(selectedAsset.metadata.categories).some((value) => value.trim().length > 0) ||
@@ -348,7 +384,7 @@ function App() {
   }
 
   async function handleSave(): Promise<void> {
-    if (!selectedAsset || !draftForm || !draftStatuses) {
+    if (!selectedAsset || !draftForm || !socialDraftForm || !draftStatuses) {
       return
     }
 
@@ -359,12 +395,13 @@ function App() {
       const updated = await updateAsset({
         assetId: selectedAsset.id,
         metadata: draftForm,
+        socialDrafts: socialDraftForm,
         submissionStatus: draftStatuses,
       })
       replaceAsset(updated)
       setNotice({
         kind: 'success',
-        text: 'Metadata and marketplace status saved locally.',
+        text: 'Metadata, social drafts, and marketplace status saved locally.',
       })
     } catch (error) {
       setNotice({
@@ -381,7 +418,7 @@ function App() {
       return
     }
 
-    setSaving(true)
+    setGeneratingDraftState(true)
     setNotice(null)
     try {
       const result = await generateDraft(selectedAsset.id)
@@ -396,7 +433,32 @@ function App() {
         text: error instanceof Error ? error.message : 'Draft generation failed.',
       })
     } finally {
-      setSaving(false)
+      setGeneratingDraftState(false)
+    }
+  }
+
+  async function handleGenerateSocialDrafts(): Promise<void> {
+    if (!selectedAsset) {
+      return
+    }
+
+    setGeneratingSocialState(true)
+    setNotice(null)
+
+    try {
+      const result = await generateSocialDrafts(selectedAsset.id)
+      replaceAsset(result.asset)
+      setNotice({
+        kind: 'success',
+        text: result.message,
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Social draft generation failed.',
+      })
+    } finally {
+      setGeneratingSocialState(false)
     }
   }
 
@@ -472,6 +534,31 @@ function App() {
       })
     } finally {
       setWorkingSocialShortcutId(null)
+    }
+  }
+
+  async function handleCopy(label: string, value: string): Promise<void> {
+    const trimmedValue = value.trim()
+
+    if (!trimmedValue) {
+      setNotice({
+        kind: 'error',
+        text: `There is no ${label.toLowerCase()} to copy yet.`,
+      })
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(trimmedValue)
+      setNotice({
+        kind: 'success',
+        text: `${label} copied to your clipboard.`,
+      })
+    } catch {
+      setNotice({
+        kind: 'error',
+        text: `Unable to copy the ${label.toLowerCase()} right now.`,
+      })
     }
   }
 
@@ -557,8 +644,13 @@ function App() {
   const readyCount = assets.filter((asset) =>
     Object.values(asset.submissionStatus).some((status) => status === 'ready'),
   ).length
+  const socialShortcutMap = useMemo(
+    () => new Map(socialShortcuts.map((shortcut) => [shortcut.id, shortcut])),
+    [socialShortcuts],
+  )
 
-  const editorDisabled = !selectedAsset || !draftForm || !draftStatuses
+  const editorDisabled = !selectedAsset || !draftForm || !socialDraftForm || !draftStatuses
+  const editorBusy = saving || generatingDraftState || generatingSocialState
   const generateButtonLabel =
     settingsDraftMode === 'offline'
       ? 'Generate offline draft'
@@ -585,7 +677,7 @@ function App() {
           <p className="hero-copy">
             This MVP keeps your contributor sessions on your PC, lets you prep photo metadata in one
             place, exports marketplace-ready CSV files for Adobe Stock, Shutterstock, and Vecteezy,
-            and gives you quick Chrome shortcuts for social posting.
+            and creates editable Facebook and X drafts alongside quick Chrome posting shortcuts.
           </p>
         </div>
         <div className="hero-stats">
@@ -717,43 +809,6 @@ function App() {
         ))}
       </section>
 
-      {socialShortcuts.length > 0 ? (
-        <section className="social-section">
-          <div className="section-head">
-            <div>
-              <p className="panel-kicker">Social</p>
-              <h2>Posting shortcuts</h2>
-            </div>
-            <p className="section-copy">
-              These buttons open your logged-in Chrome Profile 4 pages. You will still attach the
-              image manually on the site.
-            </p>
-          </div>
-          <div className="market-grid social-grid">
-            {socialShortcuts.map((shortcut) => (
-              <article className="market-card" key={shortcut.id}>
-                <div className="market-card-head">
-                  <div>
-                    <h2>{shortcut.name}</h2>
-                    <p>{shortcut.description}</p>
-                  </div>
-                  <span className="pill">Chrome Profile 4</span>
-                </div>
-                <div className="market-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={workingSocialShortcutId === shortcut.id}
-                    onClick={() => void handleSocialShortcut(shortcut.id)}
-                  >
-                    Open in Chrome
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <section className="workspace">
         <aside className="library-panel">
           <div className="panel-head">
@@ -868,8 +923,12 @@ function App() {
                   <h2>{selectedAsset.originalFilename}</h2>
                 </div>
                 <div className="editor-actions">
-                  <button className="secondary-button" disabled={saving} onClick={() => void handleGenerateDraft()}>
-                    {generateButtonLabel}
+                  <button
+                    className="secondary-button"
+                    disabled={editorBusy}
+                    onClick={() => void handleGenerateDraft()}
+                  >
+                    {generatingDraftState ? 'Generating...' : generateButtonLabel}
                   </button>
                   <button className="ghost-button" onClick={() => void handleDelete()}>
                     Remove
@@ -978,6 +1037,431 @@ function App() {
                 </div>
               </div>
 
+              <section className="social-drafts-section">
+                <div className="advanced-head">
+                  <div>
+                    <p className="panel-kicker">Social</p>
+                    <h3>Facebook and X drafts</h3>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    disabled={editorBusy}
+                    type="button"
+                    onClick={() => void handleGenerateSocialDrafts()}
+                  >
+                    {generatingSocialState ? 'Generating...' : 'Generate social drafts'}
+                  </button>
+                </div>
+                <p className="advanced-copy">
+                  These drafts stay local to this photo. The X poll generator is safe and offline-first
+                  for now, so it does not try to chase live trends yet.
+                </p>
+                {socialDraftForm ? (
+                  <div className="social-draft-grid">
+                    <article className="social-draft-card">
+                      <div className="social-draft-head">
+                        <div>
+                          <h3>{socialShortcutMap.get('facebook')?.name ?? 'Facebook'}</h3>
+                          <p>
+                            {socialShortcutMap.get('facebook')?.description ??
+                              'Create a Facebook caption, hashtags, alt text, and CTA for this image.'}
+                          </p>
+                        </div>
+                        <button
+                          className="secondary-button"
+                          disabled={
+                            workingSocialShortcutId === 'facebook' || !socialShortcutMap.has('facebook')
+                          }
+                          type="button"
+                          onClick={() => void handleSocialShortcut('facebook')}
+                        >
+                          Open in Chrome
+                        </button>
+                      </div>
+                      <label>
+                        Caption
+                        <textarea
+                          rows={4}
+                          value={socialDraftForm.facebook.caption}
+                          onChange={(event) =>
+                            setSocialDraftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    facebook: {
+                                      ...current.facebook,
+                                      caption: event.target.value,
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="social-draft-meta">
+                        <label>
+                          Hashtags
+                          <textarea
+                            rows={3}
+                            value={hashtagsToString(socialDraftForm.facebook.hashtags)}
+                            onChange={(event) =>
+                              setSocialDraftForm((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      facebook: {
+                                        ...current.facebook,
+                                        hashtags: parseHashtags(event.target.value),
+                                      },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          CTA
+                          <input
+                            type="text"
+                            value={socialDraftForm.facebook.cta}
+                            onChange={(event) =>
+                              setSocialDraftForm((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      facebook: {
+                                        ...current.facebook,
+                                        cta: event.target.value,
+                                      },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label>
+                        Alt text
+                        <textarea
+                          rows={3}
+                          value={socialDraftForm.facebook.altText}
+                          onChange={(event) =>
+                            setSocialDraftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    facebook: {
+                                      ...current.facebook,
+                                      altText: event.target.value,
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="market-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void handleCopy('Facebook caption', socialDraftForm.facebook.caption)}
+                        >
+                          Copy caption
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() =>
+                            void handleCopy('Facebook full post', buildCombinedPostText(socialDraftForm.facebook))
+                          }
+                        >
+                          Copy full post
+                        </button>
+                      </div>
+                    </article>
+
+                    <article className="social-draft-card">
+                      <div className="social-draft-head">
+                        <div>
+                          <h3>{socialShortcutMap.get('x')?.name ?? 'X'}</h3>
+                          <p>
+                            {socialShortcutMap.get('x')?.description ??
+                              'Create an X caption, hashtags, alt text, and a safe poll idea for this image.'}
+                          </p>
+                        </div>
+                        <button
+                          className="secondary-button"
+                          disabled={workingSocialShortcutId === 'x' || !socialShortcutMap.has('x')}
+                          type="button"
+                          onClick={() => void handleSocialShortcut('x')}
+                        >
+                          Open in Chrome
+                        </button>
+                      </div>
+                      <label>
+                        Post text
+                        <textarea
+                          rows={4}
+                          value={socialDraftForm.x.caption}
+                          onChange={(event) =>
+                            setSocialDraftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    x: {
+                                      ...current.x,
+                                      caption: event.target.value,
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="social-draft-meta">
+                        <label>
+                          Hashtags
+                          <textarea
+                            rows={3}
+                            value={hashtagsToString(socialDraftForm.x.hashtags)}
+                            onChange={(event) =>
+                              setSocialDraftForm((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      x: {
+                                        ...current.x,
+                                        hashtags: parseHashtags(event.target.value),
+                                      },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          CTA
+                          <input
+                            type="text"
+                            value={socialDraftForm.x.cta}
+                            onChange={(event) =>
+                              setSocialDraftForm((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      x: {
+                                        ...current.x,
+                                        cta: event.target.value,
+                                      },
+                                    }
+                                  : current,
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label>
+                        Alt text
+                        <textarea
+                          rows={3}
+                          value={socialDraftForm.x.altText}
+                          onChange={(event) =>
+                            setSocialDraftForm((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    x: {
+                                      ...current.x,
+                                      altText: event.target.value,
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <section className="poll-editor">
+                        <div className="poll-editor-head">
+                          <div>
+                            <p className="panel-kicker">X poll</p>
+                            <h4>Optional safe poll</h4>
+                          </div>
+                          {socialDraftForm.x.poll ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                setSocialDraftForm((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        x: {
+                                          ...current.x,
+                                          poll: null,
+                                        },
+                                      }
+                                    : current,
+                                )
+                              }
+                            >
+                              Clear poll
+                            </button>
+                          ) : (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() =>
+                                setSocialDraftForm((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        x: {
+                                          ...current.x,
+                                          poll: createEmptyPoll(),
+                                        },
+                                      }
+                                    : current,
+                                )
+                              }
+                            >
+                              Add poll
+                            </button>
+                          )}
+                        </div>
+                        {socialDraftForm.x.poll ? (
+                          <>
+                            <label>
+                              Poll question
+                              <input
+                                type="text"
+                                value={socialDraftForm.x.poll.question}
+                                onChange={(event) =>
+                                  setSocialDraftForm((current) =>
+                                    current && current.x.poll
+                                      ? {
+                                          ...current,
+                                          x: {
+                                            ...current.x,
+                                            poll: {
+                                              ...current.x.poll,
+                                              question: event.target.value,
+                                            },
+                                          },
+                                        }
+                                      : current,
+                                  )
+                                }
+                              />
+                            </label>
+                            <div className="poll-options-grid">
+                              {Array.from({ length: 4 }, (_, index) => (
+                                <label key={index}>
+                                  Choice {index + 1}
+                                  <input
+                                    type="text"
+                                    value={socialDraftForm.x.poll?.options[index] ?? ''}
+                                    onChange={(event) =>
+                                      setSocialDraftForm((current) => {
+                                        if (!current || !current.x.poll) {
+                                          return current
+                                        }
+
+                                        const nextOptions = Array.from(
+                                          { length: Math.max(4, current.x.poll.options.length) },
+                                          (_, optionIndex) => current.x.poll?.options[optionIndex] ?? '',
+                                        )
+                                        nextOptions[index] = event.target.value
+
+                                        return {
+                                          ...current,
+                                          x: {
+                                            ...current.x,
+                                            poll: {
+                                              ...current.x.poll,
+                                              options: nextOptions,
+                                            },
+                                          },
+                                        }
+                                      })
+                                    }
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                            <label>
+                              Poll duration
+                              <select
+                                value={socialDraftForm.x.poll.durationHours}
+                                onChange={(event) =>
+                                  setSocialDraftForm((current) =>
+                                    current && current.x.poll
+                                      ? {
+                                          ...current,
+                                          x: {
+                                            ...current.x,
+                                            poll: {
+                                              ...current.x.poll,
+                                              durationHours: Number(event.target.value),
+                                            },
+                                          },
+                                        }
+                                      : current,
+                                  )
+                                }
+                              >
+                                {X_POLL_DURATION_OPTIONS.map((hours) => (
+                                  <option key={hours} value={hours}>
+                                    {hours === 24 ? '24 hours (recommended)' : `${hours} hours`}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="market-actions">
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                onClick={() =>
+                                  socialDraftForm.x.poll
+                                    ? void handleCopy('X poll', buildPollCopy(socialDraftForm.x.poll))
+                                    : undefined
+                                }
+                              >
+                                Copy poll
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="poll-empty">
+                            <p>No poll attached yet.</p>
+                            <span>
+                              Generate social drafts or add your own poll if you want one for this post.
+                            </span>
+                          </div>
+                        )}
+                      </section>
+                      <div className="market-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void handleCopy('X post', socialDraftForm.x.caption)}
+                        >
+                          Copy text
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() =>
+                            void handleCopy('X full post', buildCombinedPostText(socialDraftForm.x))
+                          }
+                        >
+                          Copy full post
+                        </button>
+                      </div>
+                    </article>
+                  </div>
+                ) : null}
+              </section>
+
               <section className="advanced-section">
                 <div className="advanced-head">
                   <div>
@@ -1052,10 +1536,10 @@ function App() {
               <div className="footer-actions">
                 <button
                   className="primary-button"
-                  disabled={editorDisabled || saving}
+                  disabled={editorDisabled || editorBusy}
                   onClick={() => void handleSave()}
                 >
-                  {saving ? 'Saving...' : 'Save metadata'}
+                  {saving ? 'Saving...' : 'Save all changes'}
                 </button>
               </div>
             </>

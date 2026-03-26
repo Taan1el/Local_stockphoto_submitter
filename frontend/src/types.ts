@@ -38,6 +38,28 @@ export interface AssetMetadata {
   notes: string
 }
 
+export interface SocialPlatformDraft {
+  caption: string
+  hashtags: string[]
+  altText: string
+  cta: string
+}
+
+export interface XPollDraft {
+  question: string
+  options: string[]
+  durationHours: number
+}
+
+export interface XSocialDraft extends SocialPlatformDraft {
+  poll: XPollDraft | null
+}
+
+export interface AssetSocialDrafts {
+  facebook: SocialPlatformDraft
+  x: XSocialDraft
+}
+
 export interface Asset {
   id: string
   originalFilename: string
@@ -49,6 +71,7 @@ export interface Asset {
   height: number | null
   capturedAt: string | null
   metadata: AssetMetadata
+  socialDrafts: AssetSocialDrafts
   submissionStatus: Record<MarketplaceId, AssetSubmissionStatus>
   previewUrl: string
 }

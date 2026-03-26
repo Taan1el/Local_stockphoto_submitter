@@ -11,6 +11,7 @@ import { openExternalPage, openMarketplacePage } from './browser.js'
 import { buildCsv } from './csv.js'
 import { applyDraftToAsset, generateAssetDraft, replaceAssetDraft } from './metadata.js'
 import { getTypedMarketplace, MARKETPLACES } from './marketplaces.js'
+import { generateSocialDrafts } from './socialDrafts.js'
 import { getTypedSocialShortcut, SOCIAL_SHORTCUTS } from './socialShortcuts.js'
 import {
   createAssetFromImportedFile,
@@ -166,10 +167,12 @@ export async function createStockHubApp(): Promise<express.Express> {
       const asset = await updateAsset(request.params.assetId, (currentAsset) => {
         const payload = request.body as Partial<{
           metadata: Partial<AssetMetadata & { keywords: string[] | string }>
+          socialDrafts: Partial<Asset['socialDrafts']>
           submissionStatus: Partial<Record<MarketplaceId, AssetSubmissionStatus>>
         }>
 
         const metadataPatch = payload.metadata ?? {}
+        const socialDraftsPatch = payload.socialDrafts ?? {}
         const submissionPatch = payload.submissionStatus ?? {}
 
         return {
@@ -184,6 +187,38 @@ export async function createStockHubApp(): Promise<express.Express> {
             categories: {
               ...currentAsset.metadata.categories,
               ...(metadataPatch.categories ?? {}),
+            },
+          },
+          socialDrafts: {
+            facebook: {
+              ...currentAsset.socialDrafts.facebook,
+              ...(socialDraftsPatch.facebook ?? {}),
+              hashtags: Array.isArray(socialDraftsPatch.facebook?.hashtags)
+                ? socialDraftsPatch.facebook.hashtags
+                : currentAsset.socialDrafts.facebook.hashtags,
+            },
+            x: {
+              ...currentAsset.socialDrafts.x,
+              ...(socialDraftsPatch.x ?? {}),
+              hashtags: Array.isArray(socialDraftsPatch.x?.hashtags)
+                ? socialDraftsPatch.x.hashtags
+                : currentAsset.socialDrafts.x.hashtags,
+              poll:
+                socialDraftsPatch.x?.poll === null
+                  ? null
+                  : socialDraftsPatch.x?.poll
+                    ? {
+                        ...(currentAsset.socialDrafts.x.poll ?? {
+                          question: '',
+                          options: [],
+                          durationHours: 24,
+                        }),
+                        ...socialDraftsPatch.x.poll,
+                        options: Array.isArray(socialDraftsPatch.x.poll.options)
+                          ? socialDraftsPatch.x.poll.options
+                          : (currentAsset.socialDrafts.x.poll?.options ?? []),
+                      }
+                    : currentAsset.socialDrafts.x.poll,
             },
           },
           submissionStatus: {
@@ -220,6 +255,39 @@ export async function createStockHubApp(): Promise<express.Express> {
       const generated = await generateAssetDraft(imagePath, currentAsset.originalFilename, settings)
       const updatedAsset = {
         ...replaceAssetDraft(currentAsset, generated.draft),
+        updatedAt: new Date().toISOString(),
+      }
+
+      state.assets[assetIndex] = updatedAsset
+      await saveState(state)
+
+      response.json({
+        asset: serializeAsset(updatedAsset),
+        mode: generated.mode,
+        message: generated.message,
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  app.post('/api/assets/:assetId/generate-social-drafts', async (request, response, next) => {
+    try {
+      const state = await loadState()
+      const settings = await loadSettings()
+      const assetIndex = state.assets.findIndex((asset) => asset.id === request.params.assetId)
+
+      if (assetIndex === -1) {
+        response.status(404).json({ error: 'Asset not found.' })
+        return
+      }
+
+      const currentAsset = state.assets[assetIndex]
+      const imagePath = path.join(getLibraryRoot(), currentAsset.libraryRelativePath)
+      const generated = await generateSocialDrafts(currentAsset, imagePath, settings)
+      const updatedAsset = {
+        ...currentAsset,
+        socialDrafts: generated.drafts,
         updatedAt: new Date().toISOString(),
       }
 

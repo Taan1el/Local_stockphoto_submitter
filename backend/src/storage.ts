@@ -6,8 +6,11 @@ import type {
   AppState,
   Asset,
   AssetMetadata,
+  AssetSocialDrafts,
   MarketplaceId,
   PublicAppSettings,
+  SocialPlatformDraft,
+  XSocialDraft,
 } from './types.js'
 import { allMarketplaceIds } from './marketplaces.js'
 
@@ -43,6 +46,29 @@ function emptyMetadata(): AssetMetadata {
   }
 }
 
+function emptySocialPlatformDraft(): SocialPlatformDraft {
+  return {
+    caption: '',
+    hashtags: [],
+    altText: '',
+    cta: '',
+  }
+}
+
+function emptyXSocialDraft(): XSocialDraft {
+  return {
+    ...emptySocialPlatformDraft(),
+    poll: null,
+  }
+}
+
+function emptySocialDrafts(): AssetSocialDrafts {
+  return {
+    facebook: emptySocialPlatformDraft(),
+    x: emptyXSocialDraft(),
+  }
+}
+
 function emptySubmissionStatus(): Record<MarketplaceId, Asset['submissionStatus'][MarketplaceId]> {
   return {
     'adobe-stock': 'draft',
@@ -67,6 +93,126 @@ function normalizeSettings(settings: Partial<AppSettings> | null | undefined): A
         ? settings.draftGenerationMode
         : defaults.draftGenerationMode,
     openAIApiKey: typeof settings?.openAIApiKey === 'string' ? settings.openAIApiKey.trim() : '',
+  }
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.filter((item): item is string => typeof item === 'string').map((item) => item.trim())
+}
+
+function normalizeMetadata(metadata: Partial<AssetMetadata> | null | undefined): AssetMetadata {
+  const defaults = emptyMetadata()
+
+  return {
+    title: typeof metadata?.title === 'string' ? metadata.title : defaults.title,
+    description: typeof metadata?.description === 'string' ? metadata.description : defaults.description,
+    keywords: normalizeStringArray(metadata?.keywords),
+    categories: {
+      'adobe-stock':
+        typeof metadata?.categories?.['adobe-stock'] === 'string'
+          ? metadata.categories['adobe-stock']
+          : defaults.categories['adobe-stock'],
+      shutterstock:
+        typeof metadata?.categories?.shutterstock === 'string'
+          ? metadata.categories.shutterstock
+          : defaults.categories.shutterstock,
+      vecteezy:
+        typeof metadata?.categories?.vecteezy === 'string'
+          ? metadata.categories.vecteezy
+          : defaults.categories.vecteezy,
+    },
+    editorial: Boolean(metadata?.editorial),
+    mature: Boolean(metadata?.mature),
+    notes: typeof metadata?.notes === 'string' ? metadata.notes : defaults.notes,
+  }
+}
+
+function normalizeSocialPlatformDraft(
+  draft: Partial<SocialPlatformDraft> | null | undefined,
+): SocialPlatformDraft {
+  const defaults = emptySocialPlatformDraft()
+
+  return {
+    caption: typeof draft?.caption === 'string' ? draft.caption : defaults.caption,
+    hashtags: normalizeStringArray(draft?.hashtags),
+    altText: typeof draft?.altText === 'string' ? draft.altText : defaults.altText,
+    cta: typeof draft?.cta === 'string' ? draft.cta : defaults.cta,
+  }
+}
+
+function normalizeXSocialDraft(draft: Partial<XSocialDraft> | null | undefined): XSocialDraft {
+  const defaults = emptyXSocialDraft()
+  const normalizedBase = normalizeSocialPlatformDraft(draft)
+  const poll =
+    draft?.poll &&
+    typeof draft.poll.question === 'string' &&
+    Array.isArray(draft.poll.options) &&
+    typeof draft.poll.durationHours === 'number'
+      ? {
+          question: draft.poll.question,
+          options: draft.poll.options
+            .filter((option): option is string => typeof option === 'string')
+            .map((option) => option.trim())
+            .filter(Boolean)
+            .slice(0, 4),
+          durationHours: Math.max(1, Math.min(168, Math.round(draft.poll.durationHours))),
+        }
+      : defaults.poll
+
+  return {
+    ...normalizedBase,
+    poll,
+  }
+}
+
+function normalizeSocialDrafts(drafts: Partial<AssetSocialDrafts> | null | undefined): AssetSocialDrafts {
+  return {
+    facebook: normalizeSocialPlatformDraft(drafts?.facebook),
+    x: normalizeXSocialDraft(drafts?.x),
+  }
+}
+
+function normalizeSubmissionStatus(
+  submissionStatus: Partial<Record<MarketplaceId, Asset['submissionStatus'][MarketplaceId]>> | null | undefined,
+): Record<MarketplaceId, Asset['submissionStatus'][MarketplaceId]> {
+  const defaults = emptySubmissionStatus()
+  const isValidStatus = (value: unknown): value is Asset['submissionStatus'][MarketplaceId] =>
+    value === 'draft' || value === 'ready' || value === 'reviewing' || value === 'submitted'
+
+  return {
+    'adobe-stock': isValidStatus(submissionStatus?.['adobe-stock'])
+      ? submissionStatus['adobe-stock']
+      : defaults['adobe-stock'],
+    shutterstock: isValidStatus(submissionStatus?.shutterstock)
+      ? submissionStatus.shutterstock
+      : defaults.shutterstock,
+    vecteezy: isValidStatus(submissionStatus?.vecteezy)
+      ? submissionStatus.vecteezy
+      : defaults.vecteezy,
+  }
+}
+
+function normalizeAsset(asset: Partial<Asset>): Asset {
+  const now = new Date().toISOString()
+
+  return {
+    id: typeof asset.id === 'string' ? asset.id : crypto.randomUUID(),
+    originalFilename: typeof asset.originalFilename === 'string' ? asset.originalFilename : 'Untitled.jpg',
+    libraryRelativePath:
+      typeof asset.libraryRelativePath === 'string' ? asset.libraryRelativePath : '',
+    createdAt: typeof asset.createdAt === 'string' ? asset.createdAt : now,
+    updatedAt: typeof asset.updatedAt === 'string' ? asset.updatedAt : now,
+    fileSizeBytes: typeof asset.fileSizeBytes === 'number' ? asset.fileSizeBytes : 0,
+    width: typeof asset.width === 'number' ? asset.width : null,
+    height: typeof asset.height === 'number' ? asset.height : null,
+    capturedAt: typeof asset.capturedAt === 'string' ? asset.capturedAt : null,
+    metadata: normalizeMetadata(asset.metadata),
+    socialDrafts: normalizeSocialDrafts(asset.socialDrafts),
+    submissionStatus: normalizeSubmissionStatus(asset.submissionStatus),
   }
 }
 
@@ -105,9 +251,11 @@ export async function ensureDataDirs(): Promise<void> {
 export async function loadState(): Promise<AppState> {
   await ensureDataDirs()
   const raw = await fs.readFile(getStatePath(), 'utf8')
-  const parsed = JSON.parse(raw) as AppState
+  const parsed = JSON.parse(raw) as Partial<AppState>
   return {
-    assets: Array.isArray(parsed.assets) ? parsed.assets : [],
+    assets: Array.isArray(parsed.assets)
+      ? parsed.assets.map((asset) => normalizeAsset(asset as Partial<Asset>))
+      : [],
   }
 }
 
@@ -198,6 +346,7 @@ export async function createAssetFromImportedFile(input: {
     height: input.height,
     capturedAt: input.capturedAt,
     metadata: emptyMetadata(),
+    socialDrafts: emptySocialDrafts(),
     submissionStatus: emptySubmissionStatus(),
   }
 }

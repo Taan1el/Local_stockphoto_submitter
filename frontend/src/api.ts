@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   Asset,
+  AssetSocialDrafts,
   AssetSubmissionStatus,
   DraftGenerationMode,
   MarketplaceDefinition,
@@ -60,6 +61,7 @@ export async function importAssets(files: FileList | File[]): Promise<Asset[]> {
 export async function updateAsset(payload: {
   assetId: string
   metadata?: Partial<Asset['metadata']> & { keywords?: string[] | string }
+  socialDrafts?: Partial<AssetSocialDrafts>
   submissionStatus?: Partial<Record<MarketplaceId, AssetSubmissionStatus>>
 }): Promise<Asset> {
   const response = await fetch(`/api/assets/${payload.assetId}`, {
@@ -69,6 +71,7 @@ export async function updateAsset(payload: {
     },
     body: JSON.stringify({
       metadata: payload.metadata,
+      socialDrafts: payload.socialDrafts,
       submissionStatus: payload.submissionStatus,
     }),
   })
@@ -79,7 +82,7 @@ export async function updateAsset(payload: {
 export async function generateDraft(assetId: string): Promise<{
   asset: Asset
   message: string
-  mode: 'vision' | 'filename'
+  mode: 'openai' | 'offline' | 'filename'
 }> {
   const response = await fetch(`/api/assets/${assetId}/generate-draft`, {
     method: 'POST',
@@ -87,7 +90,22 @@ export async function generateDraft(assetId: string): Promise<{
   return parseJson<{
     asset: Asset
     message: string
-    mode: 'vision' | 'filename'
+    mode: 'openai' | 'offline' | 'filename'
+  }>(response)
+}
+
+export async function generateSocialDrafts(assetId: string): Promise<{
+  asset: Asset
+  message: string
+  mode: 'openai' | 'offline'
+}> {
+  const response = await fetch(`/api/assets/${assetId}/generate-social-drafts`, {
+    method: 'POST',
+  })
+  return parseJson<{
+    asset: Asset
+    message: string
+    mode: 'openai' | 'offline'
   }>(response)
 }
 

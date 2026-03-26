@@ -5,12 +5,16 @@ import type { AppState, Asset, AssetMetadata, MarketplaceId } from './types.js'
 import { allMarketplaceIds } from './marketplaces.js'
 
 const backendRoot = path.resolve(import.meta.dirname, '..')
-const dataRoot = path.join(backendRoot, 'data')
-const libraryRoot = path.join(dataRoot, 'library')
-const tempRoot = path.join(dataRoot, 'temp')
-const profilesRoot = path.join(dataRoot, 'profiles')
-const exportsRoot = path.join(dataRoot, 'exports')
-const statePath = path.join(dataRoot, 'state.json')
+const defaultDataRoot = path.join(backendRoot, 'data')
+
+function resolveDataRoot(): string {
+  const configuredRoot = process.env.STOCK_HUB_DATA_ROOT
+  return configuredRoot ? path.resolve(configuredRoot) : defaultDataRoot
+}
+
+function getStatePath(): string {
+  return path.join(resolveDataRoot(), 'state.json')
+}
 
 function emptyMetadata(): AssetMetadata {
   return {
@@ -37,6 +41,13 @@ function emptySubmissionStatus(): Record<MarketplaceId, Asset['submissionStatus'
 }
 
 export async function ensureDataDirs(): Promise<void> {
+  const dataRoot = resolveDataRoot()
+  const libraryRoot = getLibraryRoot()
+  const tempRoot = getTempRoot()
+  const profilesRoot = getProfilesRoot()
+  const exportsRoot = getExportsRoot()
+  const statePath = getStatePath()
+
   await Promise.all([
     fs.mkdir(dataRoot, { recursive: true }),
     fs.mkdir(libraryRoot, { recursive: true }),
@@ -55,7 +66,7 @@ export async function ensureDataDirs(): Promise<void> {
 
 export async function loadState(): Promise<AppState> {
   await ensureDataDirs()
-  const raw = await fs.readFile(statePath, 'utf8')
+  const raw = await fs.readFile(getStatePath(), 'utf8')
   const parsed = JSON.parse(raw) as AppState
   return {
     assets: Array.isArray(parsed.assets) ? parsed.assets : [],
@@ -63,23 +74,27 @@ export async function loadState(): Promise<AppState> {
 }
 
 export async function saveState(state: AppState): Promise<void> {
-  await fs.writeFile(statePath, JSON.stringify(state, null, 2), 'utf8')
+  await fs.writeFile(getStatePath(), JSON.stringify(state, null, 2), 'utf8')
+}
+
+export function getDataRoot(): string {
+  return resolveDataRoot()
 }
 
 export function getTempRoot(): string {
-  return tempRoot
+  return path.join(resolveDataRoot(), 'temp')
 }
 
 export function getLibraryRoot(): string {
-  return libraryRoot
+  return path.join(resolveDataRoot(), 'library')
 }
 
 export function getProfilesRoot(): string {
-  return profilesRoot
+  return path.join(resolveDataRoot(), 'profiles')
 }
 
 export function getExportsRoot(): string {
-  return exportsRoot
+  return path.join(resolveDataRoot(), 'exports')
 }
 
 export function toPublicLibraryPath(asset: Asset): string {
@@ -97,6 +112,7 @@ export async function createAssetFromImportedFile(input: {
 }): Promise<Asset> {
   const id = crypto.randomUUID()
   const safeFilename = path.basename(input.originalFilename)
+  const libraryRoot = getLibraryRoot()
   const assetFolder = path.join(libraryRoot, id)
   const libraryRelativePath = path.join(id, safeFilename)
   const finalPath = path.join(libraryRoot, libraryRelativePath)
@@ -150,7 +166,7 @@ export async function deleteAsset(assetId: string): Promise<boolean> {
 
   state.assets = state.assets.filter((item) => item.id !== assetId)
   await saveState(state)
-  await fs.rm(path.join(libraryRoot, asset.id), { recursive: true, force: true })
+  await fs.rm(path.join(getLibraryRoot(), asset.id), { recursive: true, force: true })
   return true
 }
 

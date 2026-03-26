@@ -2,6 +2,9 @@
   "name": "stock-hub-local",
   "private": true,
   "version": "0.1.0",
+  "description": "Local-first stock photo submission desktop app.",
+  "author": "Codex",
+  "main": "electron/main.cjs",
   "workspaces": [
     "frontend",
     "backend"
@@ -10,11 +13,45 @@
     "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
     "build": "npm run build --workspace frontend && npm run build --workspace backend",
     "start": "npm run start --workspace backend",
+    "desktop:start": "npm run build && electron .",
+    "desktop:package": "npm run build && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win portable",
     "lint": "npm run lint --workspace frontend && npm run lint --workspace backend",
     "build:launcher": "pkg launcher/app-launcher.cjs --targets node18-win-x64 --output StockHubLauncher.exe"
   },
+  "build": {
+    "appId": "com.stockhub.local",
+    "productName": "Stock Hub Local",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "backend/dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "StockHubLocal-Portable-${version}.exe"
+    }
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "exifr": "^7.1.3",
+    "express": "^5.1.0",
+    "image-size": "^2.0.2",
+    "multer": "^2.0.2"
+  },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
     "pkg": "^5.8.1"
   }
 }

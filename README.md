@@ -43,6 +43,20 @@ npm start
 
 Then open [http://localhost:4242](http://localhost:4242).
 
+Desktop mode:
+
+```bash
+npm run desktop:start
+```
+
+Portable Windows `.exe` build:
+
+```bash
+npm run desktop:package
+```
+
+The packaged portable app is written to `release/StockHubLocal-Portable-0.1.0.exe`.
+
 ## Data location
 
 All local app data is stored under:
@@ -51,6 +65,8 @@ All local app data is stored under:
 - `backend/data/profiles` for marketplace browser sessions
 - `backend/data/state.json` for metadata and statuses
 - `backend/data/exports` for generated CSV files
+
+For the Electron desktop build, app data is stored under the app user-data directory, and for the portable Windows build it is stored next to the executable inside `StockHubLocalData`.
 
 ## Current scope
 

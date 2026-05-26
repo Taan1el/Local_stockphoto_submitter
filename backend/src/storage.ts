@@ -101,7 +101,10 @@ function normalizeStringArray(value: unknown): string[] {
     return []
   }
 
-  return value.filter((item): item is string => typeof item === 'string').map((item) => item.trim())
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function normalizeMetadata(metadata: Partial<AssetMetadata> | null | undefined): AssetMetadata {
@@ -147,11 +150,12 @@ function normalizeSocialPlatformDraft(
 function normalizeXSocialDraft(draft: Partial<XSocialDraft> | null | undefined): XSocialDraft {
   const defaults = emptyXSocialDraft()
   const normalizedBase = normalizeSocialPlatformDraft(draft)
+  const durationHours = Number(draft?.poll?.durationHours)
   const poll =
     draft?.poll &&
     typeof draft.poll.question === 'string' &&
     Array.isArray(draft.poll.options) &&
-    typeof draft.poll.durationHours === 'number'
+    Number.isFinite(durationHours)
       ? {
           question: draft.poll.question,
           options: draft.poll.options
@@ -159,7 +163,7 @@ function normalizeXSocialDraft(draft: Partial<XSocialDraft> | null | undefined):
             .map((option) => option.trim())
             .filter(Boolean)
             .slice(0, 4),
-          durationHours: Math.max(1, Math.min(168, Math.round(draft.poll.durationHours))),
+          durationHours: Math.max(1, Math.min(168, Math.round(durationHours))),
         }
       : defaults.poll
 

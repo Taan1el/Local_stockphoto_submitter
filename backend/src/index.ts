@@ -62,6 +62,10 @@ function normalizeKeywords(input: string[] | string): string[] {
     .filter(Boolean)
 }
 
+async function removeUploadedTempFiles(files: Express.Multer.File[]): Promise<void> {
+  await Promise.all(files.map((file) => fs.rm(file.path, { force: true }).catch(() => undefined)))
+}
+
 export async function createStockHubApp(): Promise<express.Express> {
   await ensureDataDirs()
 
@@ -119,6 +123,8 @@ export async function createStockHubApp(): Promise<express.Express> {
       return
     }
 
+    const pendingFiles = new Set(files)
+
     try {
       const state = await loadState()
       const importedAssets: Asset[] = []
@@ -126,6 +132,7 @@ export async function createStockHubApp(): Promise<express.Express> {
       for (const file of files) {
         if (!validateImageFilename(file.originalname)) {
           await fs.rm(file.path, { force: true })
+          pendingFiles.delete(file)
           continue
         }
 
@@ -146,6 +153,7 @@ export async function createStockHubApp(): Promise<express.Express> {
           height: dimensions.height ?? null,
           capturedAt,
         })
+        pendingFiles.delete(file)
 
         const drafted = applyDraftToAsset(asset)
         importedAssets.push(drafted)
@@ -158,6 +166,7 @@ export async function createStockHubApp(): Promise<express.Express> {
         assets: importedAssets.sort(defaultAssetSort).map(serializeAsset),
       })
     } catch (error) {
+      await removeUploadedTempFiles([...pendingFiles])
       next(error)
     }
   })
